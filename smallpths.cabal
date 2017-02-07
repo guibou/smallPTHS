@@ -1,0 +1,52 @@
+name:                smallpths
+version:             0.1.0.0
+-- synopsis:
+-- description:
+homepage:            https://github.com/guibou/smallpths#readme
+license:             BSD3
+license-file:        LICENSE
+author:              Guillaume Bouchard
+maintainer:          guillaum.bouchard@gmail.com
+copyright:           2015-2016 Guillaume Bouchard
+category:            Web
+build-type:          Simple
+extra-source-files:  README.md
+cabal-version:       >=1.10
+
+-- library
+--   hs-source-dirs:      src
+--   exposed-modules:     Lib
+--   build-depends:       base >= 4.7 && < 5
+--   default-language:    Haskell2010
+
+executable SmallPTHS
+  hs-source-dirs:      app
+  main-is:             SmallPTHS.hs
+  ghc-options:         -fllvm -O2 -funbox-strict-fields -Wall -fno-full-laziness
+  build-depends:       base
+                     , mwc-random
+                     , vector
+                     , ghc-prim
+  default-language:    Haskell2010
+
+executable Bench
+  hs-source-dirs:      app
+  main-is:             Bench.hs
+  ghc-options:         -Wall
+  build-depends:       base
+                     , process
+                     , clock
+  default-language:    Haskell2010
+
+-- test-suite smallpths-test
+--   type:                exitcode-stdio-1.0
+--   hs-source-dirs:      test
+--   main-is:             Spec.hs
+--   build-depends:       base
+--                      , smallpths
+--   ghc-options:         -threaded -rtsopts -with-rtsopts=-N
+--   default-language:    Haskell2010
+
+source-repository head
+  type:     git
+  location: https://github.com/guibou/smallpths
