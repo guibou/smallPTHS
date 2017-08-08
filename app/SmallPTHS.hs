@@ -175,10 +175,10 @@ radiance gen r@Ray{..} depth e' = do
 
                   direct <- (f .*.) <$> getDiffuseDirect gen x nl
                   indirect <- radianceDiffuse gen (Ray x d) (depth + 1)
-                  pure ((emission obj .* (fromIntegral e')) .+. direct .+. (f .*. indirect))
+                  pure (direct .+. (f .*. indirect))
                 SPEC -> do
                   rad' <- radianceSpecular gen (Ray x (direction .-. (n .* (2 * n `dot` (direction))))) (depth + 1)
-                  pure (emission obj .+. (f .*. rad'))
+                  pure (f .*. rad')
                 REFR -> do
                   let reflRay = Ray x (direction .-. (n .* (2 * (n `dot` (direction)))))
                       into = n `dot` nl > 0
@@ -191,7 +191,7 @@ radiance gen r@Ray{..} depth e' = do
                   if cos2t < 0
                     then do
                        rad' <- radianceDiffuse gen reflRay (depth + 1)
-                       pure (emission obj .+. (f .*. rad'))
+                       pure (f .*. rad')
                     else do
                       let tdir = normalize ((direction .* nnt) .-. (n .* ((if into then 1 else (-1)) * (ddn * nnt + sqrt cos2t))))
                           a = nt - nc
@@ -223,14 +223,18 @@ radiance gen r@Ray{..} depth e' = do
 
                                        pure (radA .* re .+. radB .* tr)
 
-                      pure (emission obj .+. (f .*. subrad))
+                      pure (f .*. subrad)
       if (depth + 1) > 5 || p' == 0
         then do
           rv <- uniform gen
           if rv < p'
-            then reflect (f .* (1 / p'))
+            then do
+              res <- reflect (f .* (1 / p'))
+              pure (emission obj .* (fromIntegral e') .+. res)
             else pure (emission obj .* (fromIntegral e'))
-        else reflect f
+        else do
+           res <- reflect f
+           pure (emission obj .* (fromIntegral e') .+. res)
 
 main :: IO ()
 main = do
