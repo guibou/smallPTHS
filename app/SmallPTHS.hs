@@ -11,8 +11,8 @@ import Data.Ord (comparing)
 import Data.Foldable (for_)
 import System.IO (hFlush, stdout, withFile, IOMode(..), hPutStr)
 import System.Random.MWC (create, uniform, Gen)
-import Control.Monad (foldM)
 import Text.Read (readMaybe)
+import Data.Foldable (foldlM)
 import System.Environment (getArgs)
 import GHC.Prim (RealWorld)
 import qualified Data.Vector.Mutable as MV
@@ -122,7 +122,7 @@ radianceDiffuse gen r depth = radiance gen r depth 1
 radianceSpecular :: Gen RealWorld -> Ray -> Int -> IO Vec
 radianceSpecular gen r depth = radiance gen r depth 0
 
-getDiffuseDirect gen x f nl = foldM fFold blackVec spheres
+getDiffuseDirect gen x nl = foldlM fFold blackVec spheres
   where
     fFold accum s@Sphere{..}
       | getX emission <= 0 && getY emission <= 0 && getZ emission <= 0 = pure accum
@@ -142,7 +142,7 @@ getDiffuseDirect gen x f nl = foldM fFold blackVec spheres
             Nothing -> pure accum
             Just it ->  if getObj it == s
                         then let omega = 2 * pi * (1 - cos_a_max)
-                             in pure (accum .+. (f .*. emission .* (l `dot` nl * omega / pi)))
+                             in pure (accum .+. (emission .* (l `dot` nl * omega / pi)))
                         else pure accum
 
 radiance :: Gen RealWorld -> Ray -> Int -> Int -> IO Vec
@@ -173,7 +173,7 @@ radiance gen r@Ray{..} depth e' = do
                                      (v .* (sin r1 * r2s)) .+.
                                      (w .* (sqrt (1 - r2))))
 
-                  direct <- getDiffuseDirect gen x f nl
+                  direct <- (f .*.) <$> getDiffuseDirect gen x nl
                   indirect <- radianceDiffuse gen (Ray x d) (depth + 1)
                   pure ((emission obj .* (fromIntegral e')) .+. direct .+. (f .*. indirect))
                 SPEC -> do
@@ -196,27 +196,30 @@ radiance gen r@Ray{..} depth e' = do
                       let tdir = normalize ((direction .* nnt) .-. (n .* ((if into then 1 else (-1)) * (ddn * nnt + sqrt cos2t))))
                           a = nt - nc
                           b = nt + nc
-                          r0 = a * a / (b * b)
+                          r0 = (a / b) ^ 2
                           c = 1 - if into then -ddn else (tdir `dot` n)
-                          re = r0 + (1-r0) * c * c * c * c * c
+                          re = r0 + (1-r0) * (c ^ 5)
                           tr = 1 - re
                           p'' = 0.25 + 0.5 * re
                           rp = re / p''
                           tp = tr / (1 - p'')
+
+                          reflRadiance = radianceDiffuse gen reflRay (depth + 1)
+                          refrRadiance = radianceDiffuse gen (Ray x tdir) (depth + 1)
 
                       rnd <- uniform gen
 
                       subrad <- if (depth + 1) > 2
                                    then if rnd < p''
                                         then do
-                                          rad <- radianceDiffuse gen reflRay (depth + 1)
+                                          rad <- reflRadiance
                                           pure (rad .* rp)
                                         else do
-                                           rad <- radianceDiffuse gen (Ray x tdir) (depth + 1)
+                                           rad <- refrRadiance
                                            pure (rad .* tp)
                                    else do
-                                       radA <- radianceDiffuse gen reflRay (depth + 1)
-                                       radB <- radianceDiffuse gen (Ray x tdir) (depth + 1)
+                                       radA <- reflRadiance
+                                       radB <- refrRadiance
 
                                        pure (radA .* re .+. radB .* tr)
 
@@ -260,7 +263,7 @@ main = do
                                   (cy .* (((sy + 0.5 + dy) / 2 + fromIntegral y) / fromIntegral h - 0.5)) .+. direction cam
                          rad <- radiance gen (Ray (origin cam .+. (d' .* 140)) (normalize d')) 0 1
                          pure $ accum .+. rad
-             rad <- foldM fFold blackVec [0..(samps - 1)]
+             rad <- foldlM fFold blackVec [0..(samps - 1)]
              let clampedRes = clampV rad .* 0.25
 
              old <- MV.unsafeRead c i
