@@ -54,15 +54,15 @@ normalize v@(Vec a b c) = v .* (1 / norm)
 dot :: Vec -> Vec -> Double
 dot (Vec a b c) (Vec a' b' c') = a * a' + b * b' + c * c'
 
-data Ray = Ray {o :: !Vec, d :: !Vec} deriving (Show)
+data Ray = Ray {origin :: !Vec, direction :: !Vec} deriving (Show)
 
 data Refl_t = DIFF | SPEC | REFR deriving (Show, Eq)
 
 data Sphere = Sphere {
-  rad :: !Double,
-  p :: !Vec,
-  e :: !Vec,
-  c :: !Vec,
+  radius :: !Double,
+  position :: !Vec,
+  emission :: !Vec,
+  color :: !Vec,
   refl :: !Refl_t
   } deriving (Show, Eq)
 
@@ -72,10 +72,10 @@ data Intersect = Intersect {
   } deriving (Show)
 
 intersectSphere :: Ray -> Sphere -> Maybe Intersect
-intersectSphere r s@Sphere{..} = let op = p .-. o r
+intersectSphere r s@Sphere{..} = let op = position .-. origin r
                                      eps = 0.0001
-                                     b = op `dot` d r
-                                     det' = b * b - op `dot` op + rad * rad
+                                     b = op `dot` direction r
+                                     det' = b * b - op `dot` op + radius * radius
 
                                      det = sqrt det'
                                      ta = b - det
@@ -117,10 +117,10 @@ radiance gen r depth e' = do
   case intersectScene r of
     Nothing -> pure blackVec
     Just (Intersect obj t) -> do
-      let x = o r .+. (d r .* t)
-          n = normalize (x .-. p obj)
-          nl = if n `dot` (d r) < 0 then n else (n .* (-1))
-          f = c obj
+      let x = origin r .+. (direction r .* t)
+          n = normalize (x .-. position obj)
+          nl = if n `dot` (direction r) < 0 then n else (n .* (-1))
+          f = color obj
           p' = if getX f > getY f && getX f > getZ f
                   then getX f
                   else if getY f > getZ f
@@ -140,14 +140,14 @@ radiance gen r depth e' = do
                                      (v .* (sin r1 * r2s)) .+.
                                      (w .* (sqrt (1 - r2))))
                       fFold accum s
-                        | getX (e s) <= 0 && getY (e s) <= 0 && getZ (e s) <= 0 = pure accum
+                        | getX (emission s) <= 0 && getY (emission s) <= 0 && getZ (emission s) <= 0 = pure accum
                         | otherwise = do
                             eps1 <- uniform gen
                             eps2 <- uniform gen
-                            let sw = p s .-. x
+                            let sw = position s .-. x
                                 su = normalize ((if abs (getX sw) > 0.1 then Vec 0 1 0 else Vec 1 0 0) .%. sw)
                                 sv = sw .%. su
-                                cos_a_max = sqrt (1 - rad s * rad s / ((x .-. p s) `dot` (x .-. p s)))
+                                cos_a_max = sqrt (1 - radius s * radius s / ((x .-. position s) `dot` (x .-. position s)))
 
                                 cos_a = 1 - eps1 + eps1 * cos_a_max
                                 sin_a = sqrt (1 - cos_a * cos_a)
@@ -157,31 +157,31 @@ radiance gen r depth e' = do
                                   Nothing -> pure accum
                                   Just it ->  if getObj it == s
                                               then let omega = 2 * pi * (1 - cos_a_max)
-                                                   in pure (accum .+. (f .*. e s .* (l `dot` nl * omega / pi)))
+                                                   in pure (accum .+. (f .*. emission s .* (l `dot` nl * omega / pi)))
                                               else pure accum
 
 
                   direct <- foldM fFold blackVec spheres
                   indirect <- radiance gen (Ray x d) (depth + 1) 0
-                  pure ((e obj .* (fromIntegral e')) .+. direct .+. (f .*. indirect))
+                  pure ((emission obj .* (fromIntegral e')) .+. direct .+. (f .*. indirect))
                 SPEC -> do
-                  rad' <- radiance gen (Ray x (d r .-. (n .* (2 * n `dot` (d r))))) (depth + 1) 1
-                  pure (e obj .+. (f .*. rad'))
+                  rad' <- radiance gen (Ray x (direction r .-. (n .* (2 * n `dot` (direction r))))) (depth + 1) 1
+                  pure (emission obj .+. (f .*. rad'))
                 REFR -> do
-                  let reflRay = Ray x (d r .-. (n .* (2 * (n `dot` (d r)))))
+                  let reflRay = Ray x (direction r .-. (n .* (2 * (n `dot` (direction r)))))
                       into = n `dot` nl > 0
                       nc = 1
                       nt = 1.5
                       nnt = if into then (nc / nt) else (nt / nc)
-                      ddn = d r `dot` nl
+                      ddn = direction r `dot` nl
                       cos2t = 1 - nnt * nnt * (1 - ddn * ddn)
 
                   if cos2t < 0
                     then do
                        rad' <- radiance gen reflRay (depth + 1) 1
-                       pure (e obj .+. (f .*. rad'))
+                       pure (emission obj .+. (f .*. rad'))
                     else do
-                      let tdir = normalize ((d r .* nnt) .-. (n .* ((if into then 1 else (-1)) * (ddn * nnt + sqrt cos2t))))
+                      let tdir = normalize ((direction r .* nnt) .-. (n .* ((if into then 1 else (-1)) * (ddn * nnt + sqrt cos2t))))
                           a = nt - nc
                           b = nt + nc
                           r0 = a * a / (b * b)
@@ -208,13 +208,13 @@ radiance gen r depth e' = do
 
                                        pure (radA .* re .+. radB .* tr)
 
-                      pure (e obj .+. (f .*. subrad))
+                      pure (emission obj .+. (f .*. subrad))
       if (depth + 1) > 5 || p' == 0
         then do
           rv <- uniform gen
           if rv < p'
             then reflect (f .* (1 / p'))
-            else pure (e obj .* (fromIntegral e'))
+            else pure (emission obj .* (fromIntegral e'))
         else reflect f
 
 main :: IO ()
@@ -226,7 +226,7 @@ main = do
       samps = maybe 1 (`div`4) (listToMaybe args >>= readMaybe) :: Int
       cam = Ray (Vec 50 52 295.6) (normalize (Vec 0 (-0.042612) (-1)))
       cx = Vec (fromIntegral w * 0.5135 / fromIntegral h) 0 0
-      cy = (normalize (cx .%. d cam)) .* 0.5135
+      cy = (normalize (cx .%. direction cam)) .* 0.5135
 
   gen <- create
 
@@ -245,8 +245,8 @@ main = do
                              dy = if r2 < 1 then sqrt(r2) -1 else 1 - sqrt(2 - r2)
 
                              d' = (cx .* (((sx + 0.5 + dx) / 2 + fromIntegral x) / fromIntegral w - 0.5)) .+.
-                                  (cy .* (((sy + 0.5 + dy) / 2 + fromIntegral y) / fromIntegral h - 0.5)) .+. d cam
-                         rad <- radiance gen (Ray (o cam .+. (d' .* 140)) (normalize d')) 0 1
+                                  (cy .* (((sy + 0.5 + dy) / 2 + fromIntegral y) / fromIntegral h - 0.5)) .+. direction cam
+                         rad <- radiance gen (Ray (origin cam .+. (d' .* 140)) (normalize d')) 0 1
                          pure $ accum .+. rad
              rad <- foldM fFold blackVec [0..(samps - 1)]
              let clampedRes = clampV rad .* 0.25
