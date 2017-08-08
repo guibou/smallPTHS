@@ -72,20 +72,22 @@ data Intersect = Intersect {
   } deriving (Show)
 
 intersectSphere :: Ray -> Sphere -> Maybe Intersect
-intersectSphere r s@Sphere{..} = let op = position .-. origin r
-                                     eps = 0.0001
-                                     b = op `dot` direction r
-                                     det' = b * b - op `dot` op + radius * radius
+intersectSphere r s@Sphere{..} =
+  let
+    op = position .-. origin r
+    eps = 0.0001
+    b = op `dot` direction r
+    det' = b * b - op `dot` op + radius * radius
 
-                                     det = sqrt det'
-                                     ta = b - det
-                                     tb = b + det
-                                 in
-                                   if
-                                     | det' < 0 -> Nothing
-                                     | ta > eps -> Just (Intersect s ta)
-                                     | tb > eps -> Just (Intersect s tb)
-                                     | otherwise -> Nothing
+    det = sqrt det'
+    ta = b - det
+    tb = b + det
+  in
+    if
+      | det' < 0 -> Nothing
+      | ta > eps -> Just (Intersect s ta)
+      | tb > eps -> Just (Intersect s tb)
+      | otherwise -> Nothing
 
 spheres :: [Sphere]
 spheres = [
