@@ -72,11 +72,11 @@ data Intersect = Intersect {
   } deriving (Show)
 
 intersectSphere :: Ray -> Sphere -> Maybe Intersect
-intersectSphere r s@Sphere{..} =
+intersectSphere Ray{..} s@Sphere{..} =
   let
-    op = position .-. origin r
+    op = position .-. origin
     eps = 0.0001
-    b = op `dot` direction r
+    b = op `dot` direction
     det' = b * b - op `dot` op + radius * radius
 
     det = sqrt det'
@@ -115,13 +115,13 @@ intersectScene ray = let its = mapMaybe (intersectSphere ray) spheres
                           _ -> Just (minimumBy (comparing getT) its)
 
 radiance :: Gen RealWorld -> Ray -> Int -> Int -> IO Vec
-radiance gen r depth e' = do
+radiance gen r@Ray{..} depth e' = do
   case intersectScene r of
     Nothing -> pure blackVec
     Just (Intersect obj t) -> do
-      let x = origin r .+. (direction r .* t)
+      let x = origin .+. (direction .* t)
           n = normalize (x .-. position obj)
-          nl = if n `dot` (direction r) < 0 then n else (n .* (-1))
+          nl = if n `dot` (direction) < 0 then n else (n .* (-1))
           f = color obj
           p' = if getX f > getY f && getX f > getZ f
                   then getX f
@@ -141,15 +141,15 @@ radiance gen r depth e' = do
                       d = normalize ((u .* (cos r1 * r2s)) .+.
                                      (v .* (sin r1 * r2s)) .+.
                                      (w .* (sqrt (1 - r2))))
-                      fFold accum s
-                        | getX (emission s) <= 0 && getY (emission s) <= 0 && getZ (emission s) <= 0 = pure accum
+                      fFold accum s@Sphere{..}
+                        | getX emission <= 0 && getY emission <= 0 && getZ emission <= 0 = pure accum
                         | otherwise = do
                             eps1 <- uniform gen
                             eps2 <- uniform gen
-                            let sw = position s .-. x
+                            let sw = position .-. x
                                 su = normalize ((if abs (getX sw) > 0.1 then Vec 0 1 0 else Vec 1 0 0) .%. sw)
                                 sv = sw .%. su
-                                cos_a_max = sqrt (1 - radius s * radius s / ((x .-. position s) `dot` (x .-. position s)))
+                                cos_a_max = sqrt (1 - radius ^ 2 / ((x .-. position) `dot` (x .-. position)))
 
                                 cos_a = 1 - eps1 + eps1 * cos_a_max
                                 sin_a = sqrt (1 - cos_a * cos_a)
@@ -159,7 +159,7 @@ radiance gen r depth e' = do
                                   Nothing -> pure accum
                                   Just it ->  if getObj it == s
                                               then let omega = 2 * pi * (1 - cos_a_max)
-                                                   in pure (accum .+. (f .*. emission s .* (l `dot` nl * omega / pi)))
+                                                   in pure (accum .+. (f .*. emission .* (l `dot` nl * omega / pi)))
                                               else pure accum
 
 
@@ -167,15 +167,15 @@ radiance gen r depth e' = do
                   indirect <- radiance gen (Ray x d) (depth + 1) 0
                   pure ((emission obj .* (fromIntegral e')) .+. direct .+. (f .*. indirect))
                 SPEC -> do
-                  rad' <- radiance gen (Ray x (direction r .-. (n .* (2 * n `dot` (direction r))))) (depth + 1) 1
+                  rad' <- radiance gen (Ray x (direction .-. (n .* (2 * n `dot` (direction))))) (depth + 1) 1
                   pure (emission obj .+. (f .*. rad'))
                 REFR -> do
-                  let reflRay = Ray x (direction r .-. (n .* (2 * (n `dot` (direction r)))))
+                  let reflRay = Ray x (direction .-. (n .* (2 * (n `dot` (direction)))))
                       into = n `dot` nl > 0
                       nc = 1
                       nt = 1.5
                       nnt = if into then (nc / nt) else (nt / nc)
-                      ddn = direction r `dot` nl
+                      ddn = direction `dot` nl
                       cos2t = 1 - nnt * nnt * (1 - ddn * ddn)
 
                   if cos2t < 0
@@ -183,7 +183,7 @@ radiance gen r depth e' = do
                        rad' <- radiance gen reflRay (depth + 1) 1
                        pure (emission obj .+. (f .*. rad'))
                     else do
-                      let tdir = normalize ((direction r .* nnt) .-. (n .* ((if into then 1 else (-1)) * (ddn * nnt + sqrt cos2t))))
+                      let tdir = normalize ((direction .* nnt) .-. (n .* ((if into then 1 else (-1)) * (ddn * nnt + sqrt cos2t))))
                           a = nt - nc
                           b = nt + nc
                           r0 = a * a / (b * b)
