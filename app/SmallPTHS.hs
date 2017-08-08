@@ -109,10 +109,13 @@ toInt :: Double -> Int
 toInt x = truncate (((clamp x) ** (1 / 2.2)) * 255 + 0.5)
 
 intersectScene :: Ray -> Maybe Intersect
-intersectScene ray = let its = mapMaybe (intersectSphere ray) spheres
-                     in case its of
-                          [] -> Nothing
-                          _ -> Just (minimumBy (comparing getT) its)
+intersectScene ray =
+  let
+    its = mapMaybe (intersectSphere ray) spheres
+  in
+    case its of
+      [] -> Nothing
+      _ -> Just (minimumBy (comparing getT) its)
 
 radiance :: Gen RealWorld -> Ray -> Int -> Int -> IO Vec
 radiance gen r@Ray{..} depth e' = do
