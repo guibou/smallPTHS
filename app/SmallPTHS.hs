@@ -117,6 +117,34 @@ intersectScene ray =
       [] -> Nothing
       _ -> Just (minimumBy (comparing getT) its)
 
+radianceDiffuse :: Gen RealWorld -> Ray -> Int -> IO Vec
+radianceDiffuse gen r depth = radiance gen r depth 1
+radianceSpecular :: Gen RealWorld -> Ray -> Int -> IO Vec
+radianceSpecular gen r depth = radiance gen r depth 0
+
+getDiffuseDirect gen x f nl = foldM fFold blackVec spheres
+  where
+    fFold accum s@Sphere{..}
+      | getX emission <= 0 && getY emission <= 0 && getZ emission <= 0 = pure accum
+      | otherwise = do
+          eps1 <- uniform gen
+          eps2 <- uniform gen
+          let sw = position .-. x
+              su = normalize ((if abs (getX sw) > 0.1 then Vec 0 1 0 else Vec 1 0 0) .%. sw)
+              sv = sw .%. su
+              cos_a_max = sqrt (1 - radius ^ 2 / ((x .-. position) `dot` (x .-. position)))
+
+              cos_a = 1 - eps1 + eps1 * cos_a_max
+              sin_a = sqrt (1 - cos_a * cos_a)
+              phi = 2 * pi * eps2
+              l = normalize ((su .* (cos phi * sin_a)) .+. (sv .* (sin phi * sin_a)) .+. (sw .* cos_a))
+          case intersectScene (Ray x l) of
+            Nothing -> pure accum
+            Just it ->  if getObj it == s
+                        then let omega = 2 * pi * (1 - cos_a_max)
+                             in pure (accum .+. (f .*. emission .* (l `dot` nl * omega / pi)))
+                        else pure accum
+
 radiance :: Gen RealWorld -> Ray -> Int -> Int -> IO Vec
 radiance gen r@Ray{..} depth e' = do
   case intersectScene r of
@@ -144,33 +172,12 @@ radiance gen r@Ray{..} depth e' = do
                       d = normalize ((u .* (cos r1 * r2s)) .+.
                                      (v .* (sin r1 * r2s)) .+.
                                      (w .* (sqrt (1 - r2))))
-                      fFold accum s@Sphere{..}
-                        | getX emission <= 0 && getY emission <= 0 && getZ emission <= 0 = pure accum
-                        | otherwise = do
-                            eps1 <- uniform gen
-                            eps2 <- uniform gen
-                            let sw = position .-. x
-                                su = normalize ((if abs (getX sw) > 0.1 then Vec 0 1 0 else Vec 1 0 0) .%. sw)
-                                sv = sw .%. su
-                                cos_a_max = sqrt (1 - radius ^ 2 / ((x .-. position) `dot` (x .-. position)))
 
-                                cos_a = 1 - eps1 + eps1 * cos_a_max
-                                sin_a = sqrt (1 - cos_a * cos_a)
-                                phi = 2 * pi * eps2
-                                l = normalize ((su .* (cos phi * sin_a)) .+. (sv .* (sin phi * sin_a)) .+. (sw .* cos_a))
-                            case intersectScene (Ray x l) of
-                                  Nothing -> pure accum
-                                  Just it ->  if getObj it == s
-                                              then let omega = 2 * pi * (1 - cos_a_max)
-                                                   in pure (accum .+. (f .*. emission .* (l `dot` nl * omega / pi)))
-                                              else pure accum
-
-
-                  direct <- foldM fFold blackVec spheres
-                  indirect <- radiance gen (Ray x d) (depth + 1) 0
+                  direct <- getDiffuseDirect gen x f nl
+                  indirect <- radianceDiffuse gen (Ray x d) (depth + 1)
                   pure ((emission obj .* (fromIntegral e')) .+. direct .+. (f .*. indirect))
                 SPEC -> do
-                  rad' <- radiance gen (Ray x (direction .-. (n .* (2 * n `dot` (direction))))) (depth + 1) 1
+                  rad' <- radianceSpecular gen (Ray x (direction .-. (n .* (2 * n `dot` (direction))))) (depth + 1)
                   pure (emission obj .+. (f .*. rad'))
                 REFR -> do
                   let reflRay = Ray x (direction .-. (n .* (2 * (n `dot` (direction)))))
@@ -183,7 +190,7 @@ radiance gen r@Ray{..} depth e' = do
 
                   if cos2t < 0
                     then do
-                       rad' <- radiance gen reflRay (depth + 1) 1
+                       rad' <- radianceDiffuse gen reflRay (depth + 1)
                        pure (emission obj .+. (f .*. rad'))
                     else do
                       let tdir = normalize ((direction .* nnt) .-. (n .* ((if into then 1 else (-1)) * (ddn * nnt + sqrt cos2t))))
@@ -202,14 +209,14 @@ radiance gen r@Ray{..} depth e' = do
                       subrad <- if (depth + 1) > 2
                                    then if rnd < p''
                                         then do
-                                          rad <- radiance gen reflRay (depth + 1) 1
+                                          rad <- radianceDiffuse gen reflRay (depth + 1)
                                           pure (rad .* rp)
                                         else do
-                                           rad <- radiance gen (Ray x tdir) (depth + 1) 1
+                                           rad <- radianceDiffuse gen (Ray x tdir) (depth + 1)
                                            pure (rad .* tp)
                                    else do
-                                       radA <- radiance gen reflRay (depth + 1) 1
-                                       radB <- radiance gen (Ray x tdir) (depth + 1) 1
+                                       radA <- radianceDiffuse gen reflRay (depth + 1)
+                                       radB <- radianceDiffuse gen (Ray x tdir) (depth + 1)
 
                                        pure (radA .* re .+. radB .* tr)
 
