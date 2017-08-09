@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE RecordWildCards #-}
@@ -16,6 +17,11 @@ import Data.Foldable (foldlM)
 import System.Environment (getArgs)
 import GHC.Prim (RealWorld)
 import qualified Data.Vector.Mutable as MV
+import Data.Coerce
+
+------------------------------------------------------
+-- Vec private API
+------------------------------------------------------
 
 data Vec = Vec {
   getX :: !Double,
@@ -47,20 +53,37 @@ infixl 7 .*
 
 (Vec a b c) .* s = Vec (a * s) (b * s) (c * s)
 
-normalize :: Vec -> Vec
-normalize v@(Vec a b c) = v .* (1 / norm)
+normalize :: Direction -> NormalizedDirection
+normalize (Direction(v@(Vec a b c))) = NormalizedDirection (v .* (1 / norm))
   where norm = sqrt (a * a + b * b + c * c)
 
 dot :: Vec -> Vec -> Double
 dot (Vec a b c) (Vec a' b' c') = a * a' + b * b' + c * c'
 
-data Ray = Ray {origin :: !Vec, direction :: !Vec} deriving (Show)
+----------------------------------------------------------
+
+newtype Position = Position Vec deriving (Show, Eq)
+newtype Direction = Direction Vec deriving (Show, Eq)
+newtype NormalizedDirection = NormalizedDirection Vec deriving (Show)
+
+directionFromTo :: Position -> Position -> Direction
+directionFromTo (Position from) (Position to) = Direction (to .-. from)
+project :: Direction -> NormalizedDirection -> Double
+project (Direction d) (NormalizedDirection nd) = d `dot` nd
+
+cosinus :: NormalizedDirection -> NormalizedDirection -> Double
+cosinus (NormalizedDirection d) (NormalizedDirection nd) = d `dot` nd
+
+norm2 :: Direction -> Double
+norm2 (Direction d) = d `dot` d
+
+data Ray = Ray {origin :: !Position, direction :: !NormalizedDirection} deriving (Show)
 
 data Refl_t = DIFF | SPEC | REFR deriving (Show, Eq)
 
 data Sphere = Sphere {
   radius :: !Double,
-  position :: !Vec,
+  position :: !Position,
   emission :: !Vec,
   color :: !Vec,
   refl :: !Refl_t
@@ -74,10 +97,10 @@ data Intersect = Intersect {
 intersectSphere :: Ray -> Sphere -> Maybe Intersect
 intersectSphere Ray{..} s@Sphere{..} =
   let
-    op = position .-. origin
+    op = directionFromTo origin position
     eps = 0.0001
-    b = op `dot` direction
-    det' = b * b - op `dot` op + radius * radius
+    b = project op direction
+    det' = b * b - norm2 op + radius * radius
 
     det = sqrt det'
     ta = b - det
@@ -89,17 +112,20 @@ intersectSphere Ray{..} s@Sphere{..} =
       | tb > eps -> Just (Intersect s tb)
       | otherwise -> Nothing
 
+mkPosition :: Double -> Double -> Double -> Position
+mkPosition x y z = Position (Vec x y z)
+
 spheres :: [Sphere]
 spheres = [
-   Sphere 1e5  (Vec  (1e5+1) 40.8 81.6)  blackVec (Vec 0.75 0.25 0.25) DIFF -- Left
-  ,Sphere 1e5  (Vec (-1e5+99) 40.8 81.6) blackVec (Vec 0.25 0.25 0.75) DIFF -- Rght
-  ,Sphere 1e5  (Vec 50 40.8  1e5)      blackVec (Vec 0.75 0.75 0.75) DIFF -- Back
-  ,Sphere 1e5  (Vec 50 40.8 (-1e5+170))  blackVec blackVec            DIFF -- Frnt
-  ,Sphere 1e5  (Vec 50  1e5  81.6)     blackVec (Vec 0.75 0.75 0.75) DIFF -- Botm
-  ,Sphere 1e5  (Vec 50 (-1e5+81.6) 81.6) blackVec (Vec 0.75 0.75 0.75) DIFF -- Top
-  ,Sphere 16.5 (Vec 27 16.5 47)        blackVec ((Vec 1 1 1).*0.999)  SPEC -- Mirr
-  ,Sphere 16.5 (Vec 73 16.5 78)        blackVec ((Vec 1 1 1).*0.999)  REFR -- Glas
-  ,Sphere 1.5  (Vec 50 (81.6-16.5) 81.6) ((Vec 4 4 4).*100)   blackVec  DIFF -- Lite
+   Sphere 1e5  (mkPosition  (1e5+1) 40.8 81.6)  blackVec (Vec 0.75 0.25 0.25) DIFF -- Left
+  ,Sphere 1e5  (mkPosition (-1e5+99) 40.8 81.6) blackVec (Vec 0.25 0.25 0.75) DIFF -- Rght
+  ,Sphere 1e5  (mkPosition 50 40.8  1e5)      blackVec (Vec 0.75 0.75 0.75) DIFF -- Back
+  ,Sphere 1e5  (mkPosition 50 40.8 (-1e5+170))  blackVec blackVec            DIFF -- Frnt
+  ,Sphere 1e5  (mkPosition 50  1e5  81.6)     blackVec (Vec 0.75 0.75 0.75) DIFF -- Botm
+  ,Sphere 1e5  (mkPosition 50 (-1e5+81.6) 81.6) blackVec (Vec 0.75 0.75 0.75) DIFF -- Top
+  ,Sphere 16.5 (mkPosition 27 16.5 47)        blackVec ((Vec 1 1 1).*0.999)  SPEC -- Mirr
+  ,Sphere 16.5 (mkPosition 73 16.5 78)        blackVec ((Vec 1 1 1).*0.999)  REFR -- Glas
+  ,Sphere 1.5  (mkPosition 50 (81.6-16.5) 81.6) ((Vec 4 4 4).*100)   blackVec  DIFF -- Lite
   ]
 
 clamp :: (Num a, Ord a) => a -> a
@@ -122,7 +148,7 @@ radianceDiffuse gen r depth = radiance gen r depth 1
 radianceSpecular :: Gen RealWorld -> Ray -> Int -> IO Vec
 radianceSpecular gen r depth = radiance gen r depth 0
 
-getDiffuseDirect :: Gen RealWorld -> Vec -> Vec -> IO Vec
+getDiffuseDirect :: Gen RealWorld -> Position -> NormalizedDirection -> IO Vec
 getDiffuseDirect gen x nl = foldlM fFold blackVec spheres
   where
     fFold accum s@Sphere{..}
@@ -130,59 +156,62 @@ getDiffuseDirect gen x nl = foldlM fFold blackVec spheres
       | otherwise = do
           eps1 <- uniform gen
           eps2 <- uniform gen
-          let sw = position .-. x
-              su = normalize ((if abs (getX sw) > 0.1 then Vec 0 1 0 else Vec 1 0 0) .%. sw)
-              sv = sw .%. su
-              cos_a_max = sqrt (1 - radius ^ 2 / ((x .-. position) `dot` (x .-. position)))
+          let sw = directionFromTo x position
+              su = normalize $ coerce $ ((if abs (getX $ coerce sw) > 0.1 then Vec 0 1 0 else Vec 1 0 0) .%. coerce sw)
+              sv = coerce sw .%. coerce su
+              cos_a_max = sqrt (1 - radius ^ 2 / (norm2 (directionFromTo position x)))
 
               cos_a = 1 - eps1 + eps1 * cos_a_max
               sin_a = sqrt (1 - cos_a * cos_a)
               phi = 2 * pi * eps2
-              l = normalize ((su .* (cos phi * sin_a)) .+. (sv .* (sin phi * sin_a)) .+. (sw .* cos_a))
+              l = normalize $ coerce $ ((coerce su .* (cos phi * sin_a)) .+. (sv .* (sin phi * sin_a)) .+. (coerce sw .* cos_a))
           case intersectScene (Ray x l) of
             Nothing -> pure accum
             Just it ->  if getObj it == s
                         then let omega = 2 * pi * (1 - cos_a_max)
-                             in pure (accum .+. (emission .* (l `dot` nl * omega / pi)))
+                             in pure (accum .+. (emission .* (l `cosinus` nl * omega / pi)))
                         else pure accum
 
-getDiffuseIndirect :: Gen RealWorld -> Vec -> Vec -> IO (Ray, Double)
+getDiffuseIndirect :: Gen RealWorld -> NormalizedDirection -> Position -> IO (Ray, Double)
 getDiffuseIndirect gen nl x = do
                   let pi2 = (2 * pi) :: Double
                   r1 <- (pi2*) <$> uniform gen
                   r2 <- uniform gen
                   let r2s = sqrt r2
                       w = nl
-                      u = normalize ((if abs (getX w) > 0.1 then Vec 0 1 0 else Vec 1 0 0) .%. w)
-                      v = w .%. u
-                      d = normalize ((u .* (cos r1 * r2s)) .+.
-                                     (v .* (sin r1 * r2s)) .+.
-                                     (w .* (sqrt (1 - r2))))
+                      u = normalize (coerce ((if abs (getX (coerce w)) > 0.1 then Vec 0 1 0 else Vec 1 0 0) .%. coerce w))
+                      v = coerce w .%. coerce u
+                      d = normalize (coerce ((coerce u .* (cos r1 * r2s)) .+.
+                                     (coerce v .* (sin r1 * r2s)) .+.
+                                     (coerce w .* (sqrt (1 - r2)))))
 
                   pure ((Ray x d), 1)
 
-getSpecularIndirect :: Vec -> Vec -> Vec -> IO (Ray, Double)
-getSpecularIndirect x direction n = pure (Ray x (direction .-. (n .* (2 * n `dot` (direction)))), 1)
+reflect :: NormalizedDirection -> NormalizedDirection -> NormalizedDirection
+reflect (NormalizedDirection direction) (NormalizedDirection n) = NormalizedDirection (direction .-. (n .* (2 * n `dot` (direction))))
 
-getRefractionIndirect :: Gen RealWorld -> Vec -> Vec -> Vec -> Vec -> IO (Ray, Double)
+getSpecularIndirect :: Position -> NormalizedDirection -> NormalizedDirection -> IO (Ray, Double)
+getSpecularIndirect x direction n = pure (Ray x (reflect direction n), 1)
+
+getRefractionIndirect :: Gen RealWorld -> NormalizedDirection -> Position -> NormalizedDirection -> NormalizedDirection -> IO (Ray, Double)
 getRefractionIndirect gen nl x direction n = do
-                  let reflRay = Ray x (direction .-. (n .* (2 * (n `dot` (direction)))))
-                      into = n `dot` nl > 0
+                  let reflRay = Ray x (coerce (coerce direction .-. (coerce n .* (2 * (coerce n `dot` (coerce direction))))))
+                      into = n `cosinus` nl > 0
                       nc = 1
                       nt = 1.5
                       nnt = if into then (nc / nt) else (nt / nc)
-                      ddn = direction `dot` nl
+                      ddn = direction `cosinus` nl
                       cos2t = 1 - nnt * nnt * (1 - ddn * ddn)
 
                   if cos2t < 0
                     then do
                        pure (reflRay, 1)
                     else do
-                      let tdir = normalize ((direction .* nnt) .-. (n .* ((if into then 1 else (-1)) * (ddn * nnt + sqrt cos2t))))
+                      let tdir = normalize (coerce ((coerce direction .* nnt) .-. (coerce n .* ((if into then 1 else (-1)) * (ddn * nnt + sqrt cos2t)))))
                           a = nt - nc
                           b = nt + nc
                           r0 = (a / b) ^ 2
-                          c = 1 - if into then -ddn else (tdir `dot` n)
+                          c = 1 - if into then -ddn else (tdir `cosinus` n)
                           re = r0 + (1-r0) * (c ^ 5)
                           tr = 1 - re
                           p'' = 0.25 + 0.5 * re
@@ -194,8 +223,8 @@ getRefractionIndirect gen nl x direction n = do
                         then (reflRay, rp)
                         else (Ray x tdir, tp)
 
-reflect :: Gen RealWorld -> Sphere -> Vec -> Vec -> Int -> Vec -> Vec -> Vec -> IO Vec
-reflect gen obj nl x depth direction n f = do
+reflectBSDF :: Gen RealWorld -> Sphere -> NormalizedDirection -> Position -> Int -> NormalizedDirection -> NormalizedDirection -> Vec -> IO Vec
+reflectBSDF gen obj nl x depth direction n f = do
               case refl obj of
                 DIFF -> do
                   direct <- getDiffuseDirect gen x nl
@@ -221,9 +250,9 @@ radiance gen r@Ray{..} depth e' = do
   case intersectScene r of
     Nothing -> pure blackVec
     Just (Intersect obj t) -> do
-      let x = origin .+. (direction .* t)
-          n = normalize (x .-. position obj)
-          nl = if n `dot` (direction) < 0 then n else (n .* (-1))
+      let x = origin `translate` (coerce (coerce direction .* t))
+          n = normalize (directionFromTo (position obj) x)
+          nl = if direction `cosinus` n < 0 then n else coerce (coerce n .* (-1))
           f = color obj
           p' = if getX f > getY f && getX f > getZ f
                   then getX f
@@ -231,7 +260,7 @@ radiance gen r@Ray{..} depth e' = do
                      then getY f
                      else getZ f
 
-          ref = reflect gen obj nl x depth direction n
+          ref = reflectBSDF gen obj nl x depth direction n
       if (depth + 1) > 5 || p' == 0
         then do
           rv <- uniform gen
@@ -244,6 +273,9 @@ radiance gen r@Ray{..} depth e' = do
            res <- ref f
            pure (emission obj .* (fromIntegral e') .+. res)
 
+mkDirection :: Double -> Double -> Double -> Direction
+mkDirection a b c = Direction (Vec a b c)
+
 main :: IO ()
 main = do
   args <- getArgs
@@ -251,9 +283,9 @@ main = do
   let w = 1024 :: Int
       h = 768 :: Int
       samps = maybe 1 (`div`4) (listToMaybe args >>= readMaybe) :: Int
-      cam = Ray (Vec 50 52 295.6) (normalize (Vec 0 (-0.042612) (-1)))
+      cam = Ray (mkPosition 50 52 295.6) (normalize (mkDirection 0 (-0.042612) (-1)))
       cx = Vec (fromIntegral w * 0.5135 / fromIntegral h) 0 0
-      cy = (normalize (cx .%. direction cam)) .* 0.5135
+      cy = (coerce (normalize (coerce (cx .%. coerce (direction cam))))) .* 0.5135
 
   gen <- create
 
@@ -272,8 +304,8 @@ main = do
                              dy = if r2 < 1 then sqrt(r2) -1 else 1 - sqrt(2 - r2)
 
                              d' = (cx .* (((sx + 0.5 + dx) / 2 + fromIntegral x) / fromIntegral w - 0.5)) .+.
-                                  (cy .* (((sy + 0.5 + dy) / 2 + fromIntegral y) / fromIntegral h - 0.5)) .+. direction cam
-                         rad <- radiance gen (Ray (origin cam .+. (d' .* 140)) (normalize d')) 0 1
+                                  (cy .* (((sy + 0.5 + dy) / 2 + fromIntegral y) / fromIntegral h - 0.5)) .+. (coerce direction cam)
+                         rad <- radiance gen (Ray (origin cam `translate` (coerce (d' .* 140))) (normalize (coerce d'))) 0 1
                          pure $ accum .+. rad
              rad <- foldlM fFold blackVec [0..(samps - 1)]
              let clampedRes = clampV rad .* 0.25
@@ -288,6 +320,9 @@ main = do
     for_ [0..(w * h) - 1] $ \i -> do
       v <- MV.unsafeRead c i
       hPutStr handle (v2c v)
+
+translate :: Position -> Direction -> Position
+translate (Position p) (Direction d) = Position (p .+. d)
 
 v2c :: Vec -> [Char]
 v2c (Vec a b c) = show (toInt a) ++ " " ++ show (toInt b) ++ " " ++ show (toInt c) ++ " "
