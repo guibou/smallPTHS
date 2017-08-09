@@ -194,19 +194,13 @@ getRefractionIndirect gen nl x depth direction n = do
 
                       rnd <- uniform gen
 
-                      if (depth + 1) > 2
-                                   then if rnd < p''
-                                        then do
-                                          rad <- reflRadiance
-                                          pure (rad .* rp)
-                                        else do
-                                           rad <- refrRadiance
-                                           pure (rad .* tp)
-                                   else do
-                                       radA <- reflRadiance
-                                       radB <- refrRadiance
-
-                                       pure (radA .* re .+. radB .* tr)
+                      if rnd < p''
+                        then do
+                           rad <- reflRadiance
+                           pure (rad .* rp)
+                        else do
+                           rad <- refrRadiance
+                           pure (rad .* tp)
 
 reflect :: Gen RealWorld -> Sphere -> Vec -> Vec -> Int -> Vec -> Vec -> Vec -> IO Vec
 reflect gen obj nl x depth direction n f = do
