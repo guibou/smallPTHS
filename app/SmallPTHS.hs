@@ -146,8 +146,8 @@ getDiffuseDirect gen x nl = foldlM fFold blackVec spheres
                              in pure (accum .+. (emission .* (l `dot` nl * omega / pi)))
                         else pure accum
 
-getDiffuseIndirect :: Gen RealWorld -> Vec -> Vec -> Int -> IO Vec
-getDiffuseIndirect gen nl x depth = do
+getDiffuseIndirect :: Gen RealWorld -> Vec -> Vec -> IO (Ray, Double)
+getDiffuseIndirect gen nl x = do
                   let pi2 = (2 * pi) :: Double
                   r1 <- (pi2*) <$> uniform gen
                   r2 <- uniform gen
@@ -159,13 +159,13 @@ getDiffuseIndirect gen nl x depth = do
                                      (v .* (sin r1 * r2s)) .+.
                                      (w .* (sqrt (1 - r2))))
 
-                  radianceDiffuse gen (Ray x d) (depth + 1)
+                  pure ((Ray x d), 1)
 
-getSpecularIndirect :: Gen RealWorld -> Vec -> Int -> Vec -> Vec -> IO Vec
-getSpecularIndirect gen x depth direction n = radianceSpecular gen (Ray x (direction .-. (n .* (2 * n `dot` (direction))))) (depth + 1)
+getSpecularIndirect :: Vec -> Vec -> Vec -> IO (Ray, Double)
+getSpecularIndirect x direction n = pure (Ray x (direction .-. (n .* (2 * n `dot` (direction)))), 1)
 
-getRefractionIndirect :: Gen RealWorld -> Vec -> Vec -> Int -> Vec -> Vec -> IO Vec
-getRefractionIndirect gen nl x depth direction n = do
+getRefractionIndirect :: Gen RealWorld -> Vec -> Vec -> Vec -> Vec -> IO (Ray, Double)
+getRefractionIndirect gen nl x direction n = do
                   let reflRay = Ray x (direction .-. (n .* (2 * (n `dot` (direction)))))
                       into = n `dot` nl > 0
                       nc = 1
@@ -176,7 +176,7 @@ getRefractionIndirect gen nl x depth direction n = do
 
                   if cos2t < 0
                     then do
-                       radianceDiffuse gen reflRay (depth + 1)
+                       pure (reflRay, 1)
                     else do
                       let tdir = normalize ((direction .* nnt) .-. (n .* ((if into then 1 else (-1)) * (ddn * nnt + sqrt cos2t))))
                           a = nt - nc
@@ -188,34 +188,33 @@ getRefractionIndirect gen nl x depth direction n = do
                           p'' = 0.25 + 0.5 * re
                           rp = re / p''
                           tp = tr / (1 - p'')
-
-                          reflRadiance = radianceDiffuse gen reflRay (depth + 1)
-                          refrRadiance = radianceDiffuse gen (Ray x tdir) (depth + 1)
-
                       rnd <- uniform gen
 
-                      if rnd < p''
-                        then do
-                           rad <- reflRadiance
-                           pure (rad .* rp)
-                        else do
-                           rad <- refrRadiance
-                           pure (rad .* tp)
+                      pure $ if rnd < p''
+                        then (reflRay, rp)
+                        else (Ray x tdir, tp)
 
 reflect :: Gen RealWorld -> Sphere -> Vec -> Vec -> Int -> Vec -> Vec -> Vec -> IO Vec
 reflect gen obj nl x depth direction n f = do
               case refl obj of
                 DIFF -> do
                   direct <- getDiffuseDirect gen x nl
-                  indirect <- getDiffuseIndirect gen nl x depth
+                  (iRay, iWeight) <- getDiffuseIndirect gen nl x
 
-                  pure (f .*. (direct .+. indirect))
+                  indirect <- radiance gen iRay (depth + 1) 1
+                  pure (f .*. (direct .+. indirect .* iWeight))
                 SPEC -> do
-                  indirect <- getSpecularIndirect gen x depth direction n
-                  pure (f .*. indirect)
+                  (iRay, iWeight) <- getSpecularIndirect x direction n
+
+                  indirect <- radiance gen iRay (depth + 1) 1
+
+                  pure (f .*. indirect .* iWeight)
                 REFR -> do
-                  indirect <- getRefractionIndirect gen nl x depth direction n
-                  pure (f .*. indirect)
+                  (iRay, iWeight) <- getRefractionIndirect gen nl x direction n
+
+                  indirect <- radiance gen iRay (depth + 1) 1
+
+                  pure (f .*. indirect .* iWeight)
 
 radiance :: Gen RealWorld -> Ray -> Int -> Int -> IO Vec
 radiance gen r@Ray{..} depth e' = do
