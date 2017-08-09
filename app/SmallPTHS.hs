@@ -145,21 +145,7 @@ getDiffuseDirect gen x nl = foldlM fFold blackVec spheres
                              in pure (accum .+. (emission .* (l `dot` nl * omega / pi)))
                         else pure accum
 
-radiance :: Gen RealWorld -> Ray -> Int -> Int -> IO Vec
-radiance gen r@Ray{..} depth e' = do
-  case intersectScene r of
-    Nothing -> pure blackVec
-    Just (Intersect obj t) -> do
-      let x = origin .+. (direction .* t)
-          n = normalize (x .-. position obj)
-          nl = if n `dot` (direction) < 0 then n else (n .* (-1))
-          f = color obj
-          p' = if getX f > getY f && getX f > getZ f
-                  then getX f
-                  else if getY f > getZ f
-                     then getY f
-                     else getZ f
-          reflect f = do
+reflect gen obj nl x depth direction n f = do
               case refl obj of
                 DIFF -> do
                   let pi2 = (2 * pi) :: Double
@@ -173,9 +159,9 @@ radiance gen r@Ray{..} depth e' = do
                                      (v .* (sin r1 * r2s)) .+.
                                      (w .* (sqrt (1 - r2))))
 
-                  direct <- (f .*.) <$> getDiffuseDirect gen x nl
+                  direct <- getDiffuseDirect gen x nl
                   indirect <- radianceDiffuse gen (Ray x d) (depth + 1)
-                  pure (direct .+. (f .*. indirect))
+                  pure (f .*. (direct .+. indirect))
                 SPEC -> do
                   rad' <- radianceSpecular gen (Ray x (direction .-. (n .* (2 * n `dot` (direction))))) (depth + 1)
                   pure (f .*. rad')
@@ -224,16 +210,34 @@ radiance gen r@Ray{..} depth e' = do
                                        pure (radA .* re .+. radB .* tr)
 
                       pure (f .*. subrad)
+
+
+radiance :: Gen RealWorld -> Ray -> Int -> Int -> IO Vec
+radiance gen r@Ray{..} depth e' = do
+  case intersectScene r of
+    Nothing -> pure blackVec
+    Just (Intersect obj t) -> do
+      let x = origin .+. (direction .* t)
+          n = normalize (x .-. position obj)
+          nl = if n `dot` (direction) < 0 then n else (n .* (-1))
+          f = color obj
+          p' = if getX f > getY f && getX f > getZ f
+                  then getX f
+                  else if getY f > getZ f
+                     then getY f
+                     else getZ f
+
+          ref = reflect gen obj nl x depth direction n
       if (depth + 1) > 5 || p' == 0
         then do
           rv <- uniform gen
           if rv < p'
             then do
-              res <- reflect (f .* (1 / p'))
+              res <- ref (f .* (1 / p'))
               pure (emission obj .* (fromIntegral e') .+. res)
             else pure (emission obj .* (fromIntegral e'))
         else do
-           res <- reflect f
+           res <- ref f
            pure (emission obj .* (fromIntegral e') .+. res)
 
 main :: IO ()
