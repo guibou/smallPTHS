@@ -122,6 +122,7 @@ radianceDiffuse gen r depth = radiance gen r depth 1
 radianceSpecular :: Gen RealWorld -> Ray -> Int -> IO Vec
 radianceSpecular gen r depth = radiance gen r depth 0
 
+getDiffuseDirect :: Gen RealWorld -> Vec -> Vec -> IO Vec
 getDiffuseDirect gen x nl = foldlM fFold blackVec spheres
   where
     fFold accum s@Sphere{..}
@@ -145,9 +146,8 @@ getDiffuseDirect gen x nl = foldlM fFold blackVec spheres
                              in pure (accum .+. (emission .* (l `dot` nl * omega / pi)))
                         else pure accum
 
-reflect gen obj nl x depth direction n f = do
-              case refl obj of
-                DIFF -> do
+getDiffuseIndirect :: Gen RealWorld -> Vec -> Vec -> Int -> IO Vec
+getDiffuseIndirect gen nl x depth = do
                   let pi2 = (2 * pi) :: Double
                   r1 <- (pi2*) <$> uniform gen
                   r2 <- uniform gen
@@ -159,13 +159,13 @@ reflect gen obj nl x depth direction n f = do
                                      (v .* (sin r1 * r2s)) .+.
                                      (w .* (sqrt (1 - r2))))
 
-                  direct <- getDiffuseDirect gen x nl
-                  indirect <- radianceDiffuse gen (Ray x d) (depth + 1)
-                  pure (f .*. (direct .+. indirect))
-                SPEC -> do
-                  rad' <- radianceSpecular gen (Ray x (direction .-. (n .* (2 * n `dot` (direction))))) (depth + 1)
-                  pure (f .*. rad')
-                REFR -> do
+                  radianceDiffuse gen (Ray x d) (depth + 1)
+
+getSpecularIndirect :: Gen RealWorld -> Vec -> Int -> Vec -> Vec -> IO Vec
+getSpecularIndirect gen x depth direction n = radianceSpecular gen (Ray x (direction .-. (n .* (2 * n `dot` (direction))))) (depth + 1)
+
+getRefractionIndirect :: Gen RealWorld -> Vec -> Vec -> Int -> Vec -> Vec -> IO Vec
+getRefractionIndirect gen nl x depth direction n = do
                   let reflRay = Ray x (direction .-. (n .* (2 * (n `dot` (direction)))))
                       into = n `dot` nl > 0
                       nc = 1
@@ -176,8 +176,7 @@ reflect gen obj nl x depth direction n f = do
 
                   if cos2t < 0
                     then do
-                       rad' <- radianceDiffuse gen reflRay (depth + 1)
-                       pure (f .*. rad')
+                       radianceDiffuse gen reflRay (depth + 1)
                     else do
                       let tdir = normalize ((direction .* nnt) .-. (n .* ((if into then 1 else (-1)) * (ddn * nnt + sqrt cos2t))))
                           a = nt - nc
@@ -195,7 +194,7 @@ reflect gen obj nl x depth direction n f = do
 
                       rnd <- uniform gen
 
-                      subrad <- if (depth + 1) > 2
+                      if (depth + 1) > 2
                                    then if rnd < p''
                                         then do
                                           rad <- reflRadiance
@@ -209,8 +208,20 @@ reflect gen obj nl x depth direction n f = do
 
                                        pure (radA .* re .+. radB .* tr)
 
-                      pure (f .*. subrad)
+reflect :: Gen RealWorld -> Sphere -> Vec -> Vec -> Int -> Vec -> Vec -> Vec -> IO Vec
+reflect gen obj nl x depth direction n f = do
+              case refl obj of
+                DIFF -> do
+                  direct <- getDiffuseDirect gen x nl
+                  indirect <- getDiffuseIndirect gen nl x depth
 
+                  pure (f .*. (direct .+. indirect))
+                SPEC -> do
+                  indirect <- getSpecularIndirect gen x depth direction n
+                  pure (f .*. indirect)
+                REFR -> do
+                  indirect <- getRefractionIndirect gen nl x depth direction n
+                  pure (f .*. indirect)
 
 radiance :: Gen RealWorld -> Ray -> Int -> Int -> IO Vec
 radiance gen r@Ray{..} depth e' = do
