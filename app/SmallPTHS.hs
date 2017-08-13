@@ -29,7 +29,7 @@ data Vec = Vec {
   getX :: !Double,
   getY :: !Double,
   getZ :: !Double
-  } deriving (Show, Eq)
+  } deriving (Show)
 
 blackVec :: Vec
 blackVec = Vec 0 0 0
@@ -64,8 +64,8 @@ dot (Vec a b c) (Vec a' b' c') = a * a' + b * b' + c * c'
 
 ----------------------------------------------------------
 
-newtype Position = Position Vec deriving (Show, Eq)
-newtype Direction = Direction Vec deriving (Show, Eq)
+newtype Position = Position Vec deriving (Show)
+newtype Direction = Direction Vec deriving (Show)
 newtype NormalizedDirection = NormalizedDirection Vec deriving (Show)
 
 directionFromTo :: Position -> Position -> Direction
@@ -81,7 +81,7 @@ norm2 (Direction d) = d `dot` d
 
 data Ray = Ray {origin :: !Position, direction :: !NormalizedDirection} deriving (Show)
 
-data Refl_t = DIFF | SPEC | REFR deriving (Show, Eq)
+data Refl_t = DIFF | SPEC | REFR deriving (Show)
 
 data Sphere = Sphere {
   radius :: !Double,
@@ -89,7 +89,7 @@ data Sphere = Sphere {
   emission :: !Vec,
   color :: !Vec,
   refl :: !Refl_t
-  } deriving (Show, Eq)
+  } deriving (Show)
 
 data Intersect = Intersect {
   getObj :: !Sphere,
@@ -153,7 +153,7 @@ radianceSpecular gen r depth = radiance gen r depth 0
 getDiffuseDirect :: Gen RealWorld -> Position -> NormalizedDirection -> IO Vec
 getDiffuseDirect gen x nl = foldlM fFold blackVec spheres
   where
-    fFold accum s@Sphere{..}
+    fFold accum s@(Sphere{..})
       | getX emission <= 0 && getY emission <= 0 && getZ emission <= 0 = pure accum
       | otherwise = do
           eps1 <- uniform gen
@@ -167,12 +167,16 @@ getDiffuseDirect gen x nl = foldlM fFold blackVec spheres
               sin_a = sqrt (1 - cos_a * cos_a)
               phi = 2 * pi * eps2
               l = normalize $ coerce $ ((coerce su .* (cos phi * sin_a)) .+. (sv .* (sin phi * sin_a)) .+. (coerce sw .* cos_a))
-          case intersectScene (Ray x l) of
-            Nothing -> pure accum
-            Just it ->  if getObj it == s
+
+
+              -- this is silly, but, well ;)
+              itSphere = intersectSphere (Ray x l) s
+          case (itSphere, intersectScene (Ray x l)) of
+            (Just it, Just it') ->  if (getT it) == (getT it')
                         then let omega = 2 * pi * (1 - cos_a_max)
                              in pure (accum .+. (emission .* (l `cosinus` nl * omega / pi)))
                         else pure accum
+            _ -> pure accum
 
 getDiffuseIndirect :: Gen RealWorld -> NormalizedDirection -> Position -> IO (Ray, Double)
 getDiffuseIndirect gen nl x = do
