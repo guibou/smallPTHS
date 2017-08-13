@@ -15,13 +15,15 @@ main = do
   callCommand "make -C CPP"
   callCommand "stack build"
 
+  name <- readProcess "stack" ["--no-nix-pure", "exec", "--", "which", "SmallPTHS"] ""
+
+  print name
+
   -- Bench CPP
   cppTime <- bench "./CPP/smallpt 4"
 
   -- Bench HS
-  -- This is a bit unfair for haskell because there is approximatly 1s
-  -- of overhead from stack
-  hsTime <- bench "stack exec SmallPTHS"
+  hsTime <- bench (init name ++ " 4")
 
   putStrLn "----"
   print cppTime
