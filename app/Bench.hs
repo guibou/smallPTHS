@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeApplications #-}
 import System.Clock
 import System.Process
 
@@ -29,4 +30,4 @@ main = do
   print cppTime
   print hsTime
 
-  putStrLn ("Haskell is " ++ show (fromIntegral hsTime / fromIntegral cppTime) ++ " times slower.")
+  putStrLn ("Haskell is " ++ show @Double (fromIntegral hsTime / fromIntegral cppTime) ++ " times slower.")
