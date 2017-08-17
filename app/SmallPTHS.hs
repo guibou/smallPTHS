@@ -17,7 +17,7 @@ import Data.Foldable (for_)
 import System.IO (hFlush, stdout, withFile, IOMode(..), hPutStr)
 import System.Random.MWC (create, uniform, Gen)
 import Text.Read (readMaybe)
-import Data.Foldable (foldlM)
+import Data.Foldable (foldlM, foldl')
 import System.Environment (getArgs)
 import GHC.Prim (RealWorld)
 import qualified Data.Vector.Mutable as MV
@@ -87,6 +87,14 @@ norm2 (Direction d) = d `dot` d
 isBlack :: Color -> Bool
 isBlack Black = True
 isBlack _ = False
+
+--- Sampling
+data Sample2D = Sample2D !Double !Double
+  deriving (Show)
+
+sample2D :: Gen RealWorld -> IO Sample2D
+sample2D gen = Sample2D <$> uniform gen <*> uniform gen
+---
 
 data Ray = Ray {origin :: !Position, direction :: !(Direction 'NotNormalized)} deriving (Show)
 
@@ -173,12 +181,10 @@ arbitraryOrthogonal (Direction d@(Vec x _ _))
   | abs x > 0.1 = Direction (Vec 0 1 0 .%. d)
   | otherwise = Direction (Vec 1 0 0 .%. d)
 
-getDiffuseDirect :: Gen RealWorld -> Position -> Direction 'NotNormalized -> IO Color
-getDiffuseDirect gen x nl = foldlM fFold Black lights
+getDiffuseDirect :: Sample2D -> Position -> Direction 'NotNormalized -> Color
+getDiffuseDirect (Sample2D eps1 eps2) x nl = foldl' fFold Black lights
   where
     fFold accum s@(Sphere{..}) = do
-          eps1 <- uniform gen
-          eps2 <- uniform gen
           let sw = directionFromTo x position
               su = normalize (arbitraryOrthogonal sw)
               sv = sw `orthogonalDirection` su
@@ -198,9 +204,9 @@ getDiffuseDirect gen x nl = foldlM fFold Black lights
           case (itSphere, intersectScene (Ray x l)) of
             (Just it, Just it') ->  if (getT it) == (getT it')
                         then let omega = 2 * pi * (1 - cos_a_max)
-                             in pure (accum `addColor` (emission `scaleColor` (l `cosinus` nl * omega / pi)))
-                        else pure accum
-            _ -> pure accum
+                             in accum `addColor` (emission `scaleColor` (l `cosinus` nl * omega / pi))
+                        else accum
+            _ -> accum
 
 mixColor :: Color -> Color -> Color
 mixColor (Color c) (Color c') = Color (c .*. c')
@@ -208,12 +214,11 @@ mixColor (Color c) (Color c') = Color (c .*. c')
 addColor :: Color -> Color -> Color
 addColor (Color c) (Color c') = Color (c .+. c')
 
-getDiffuseIndirect :: Gen RealWorld -> Direction 'NotNormalized -> Position -> IO (Ray, Double)
-getDiffuseIndirect gen nl x = do
+getDiffuseIndirect :: Sample2D -> Direction 'NotNormalized -> Position -> (Ray, Double)
+getDiffuseIndirect (Sample2D su r2) nl x =
                   let pi2 = (2 * pi) :: Double
-                  r1 <- (pi2*) <$> uniform gen
-                  r2 <- uniform gen
-                  let r2s = sqrt r2
+                      r1 = pi2 * su
+                      r2s = sqrt r2
                       w = nl
                       u = normalize (arbitraryOrthogonal w)
                       v = w `orthogonalDirection` u
@@ -222,7 +227,7 @@ getDiffuseIndirect gen nl x = do
                                                              (sin r1 * r2s)
                                                              (sqrt (1 - r2)))
 
-                  pure ((Ray x d), 1)
+                  in ((Ray x d), 1)
 
 reflect :: Direction 'NotNormalized -> Direction 'NotNormalized -> Direction 'NotNormalized
 reflect (Direction direction) (Direction n) = Direction (direction .-. (n .* (2 * n `dot` (direction))))
@@ -233,8 +238,8 @@ getSpecularIndirect x direction n = pure (Ray x (reflect direction n), 1)
 minus :: Direction k -> Direction k' -> Direction 'NotNormalized
 minus (Direction d) (Direction d') = Direction (d .-. d')
 
-getRefractionIndirect :: Gen RealWorld -> Direction 'NotNormalized -> Position -> Direction 'NotNormalized -> Direction 'NotNormalized -> IO (Ray, Double)
-getRefractionIndirect gen nl x direction n = do
+getRefractionIndirect :: Sample2D -> Direction 'NotNormalized -> Position -> Direction 'NotNormalized -> Direction 'NotNormalized -> (Ray, Double)
+getRefractionIndirect (Sample2D rnd _) nl x direction n =
                   let reflRay = Ray x (reflect direction n)
                       into = n `cosinus` nl > 0
                       nc = 1
@@ -243,9 +248,8 @@ getRefractionIndirect gen nl x direction n = do
                       ddn = direction `cosinus` nl
                       cos2t = 1 - nnt * nnt * (1 - ddn * ddn)
 
-                  if cos2t < 0
-                    then do
-                       pure (reflRay, 1)
+                  in if cos2t < 0
+                    then (reflRay, 1)
                     else do
                       let tdir = normalize ((scale direction nnt) `minus` (scale nl ((ddn * nnt + sqrt cos2t))))
                           a = nt - nc
@@ -257,18 +261,18 @@ getRefractionIndirect gen nl x direction n = do
                           p'' = 0.25 + 0.5 * re
                           rp = re / p''
                           tp = tr / (1 - p'')
-                      rnd <- uniform gen
 
-                      pure $ if rnd < p''
+                      if rnd < p''
                         then (reflRay, rp)
                         else (Ray x tdir, tp)
 
 reflectBSDF :: Gen RealWorld -> Sphere -> Direction 'NotNormalized -> Position -> Int -> Direction 'NotNormalized -> Direction 'NotNormalized -> Color -> IO Color
 reflectBSDF gen obj nl x depth direction n f = do
+              sample <- sample2D gen
               case refl obj of
                 DIFF -> do
-                  direct <- getDiffuseDirect gen x nl
-                  (iRay, iWeight) <- getDiffuseIndirect gen nl x
+                  let direct = getDiffuseDirect sample x nl
+                      (iRay, iWeight) = getDiffuseIndirect sample nl x
 
                   indirect <- radiance gen iRay (depth + 1) 1
                   pure (f `mixColor` (direct `addColor` (indirect `scaleColor` iWeight)))
@@ -279,7 +283,7 @@ reflectBSDF gen obj nl x depth direction n f = do
 
                   pure (f `mixColor` indirect `scaleColor` iWeight)
                 REFR -> do
-                  (iRay, iWeight) <- getRefractionIndirect gen nl x direction n
+                  let (iRay, iWeight) = getRefractionIndirect sample nl x direction n
 
                   indirect <- radiance gen iRay (depth + 1) 1
 
@@ -349,9 +353,10 @@ main = do
        for_ [0..1] $ \sy ->
           for_ [0..1] $ \sx -> do
              let fFold accum _ = do
-                         r1 <- (2*) <$> uniform gen
-                         r2 <- (2*) <$> uniform gen
-                         let dx = if r1 < 1 then sqrt(r1) -1 else 1 - sqrt(2 - r1)
+                         (Sample2D u v) <- sample2D gen
+                         let r1 = 2 * u
+                             r2 = 2 * v
+                             dx = if r1 < 1 then sqrt(r1) -1 else 1 - sqrt(2 - r1)
                              dy = if r2 < 1 then sqrt(r2) -1 else 1 - sqrt(2 - r2)
 
                              d' = rotateBasis (cx, cy, direction cam) (mkDirection
