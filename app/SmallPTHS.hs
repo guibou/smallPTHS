@@ -182,9 +182,10 @@ arbitraryOrthogonal (Direction d@(Vec x _ _))
   | otherwise = Direction (Vec 1 0 0 .%. d)
 
 getDiffuseDirect :: Sample2D -> Position -> Direction 'NotNormalized -> Color
-getDiffuseDirect (Sample2D eps1 eps2) x nl = foldl' fFold Black lights
+getDiffuseDirect (Sample2D eps1 eps2) x nl = foldl' addColor Black (map getALightContrib lights)
   where
-    fFold accum s@(Sphere{..}) = do
+    getALightContrib :: Sphere -> Color
+    getALightContrib s@(Sphere{..}) = do
           let sw = directionFromTo x position
               su = normalize (arbitraryOrthogonal sw)
               sv = sw `orthogonalDirection` su
@@ -204,9 +205,9 @@ getDiffuseDirect (Sample2D eps1 eps2) x nl = foldl' fFold Black lights
           case (itSphere, intersectScene (Ray x l)) of
             (Just it, Just it') ->  if (getT it) == (getT it')
                         then let omega = 2 * pi * (1 - cos_a_max)
-                             in accum `addColor` (emission `scaleColor` (l `cosinus` nl * omega / pi))
-                        else accum
-            _ -> accum
+                             in (emission `scaleColor` (l `cosinus` nl * omega / pi))
+                        else Black
+            _ -> Black
 
 mixColor :: Color -> Color -> Color
 mixColor (Color c) (Color c') = Color (c .*. c')
