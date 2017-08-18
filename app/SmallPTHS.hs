@@ -10,7 +10,7 @@
 
 module Main where
 
-import Data.Maybe (mapMaybe, listToMaybe)
+import Data.Maybe (mapMaybe, listToMaybe, isJust)
 import Data.List (minimumBy)
 import Data.Ord (comparing)
 import Data.Foldable (for_)
@@ -345,12 +345,17 @@ main = do
       cx = mkDirection (fromIntegral w * 0.5135 / fromIntegral h) 0 0
       cy = (normalize (cx `orthogonalDirection` direction cam)) `scale` 0.5135
 
+      (output) = if length args == 2
+                 then Just (args !! 1)
+                 else Nothing
+
   gen <- create
 
   c <- MV.replicate (h * w) Black
   forConcurrently_ [0 .. (h - 1)] $ \y -> do
-    putStr ("\rRendering (" ++ show (samps * 4) ++ " spp) " ++ show ((100 * fromIntegral y / (fromIntegral h - 1)) :: Double) ++ "%.")
-    hFlush stdout
+    when (isJust output) $ do
+      putStr ("\rRendering (" ++ show (samps * 4) ++ " spp) " ++ show ((100 * fromIntegral y / (fromIntegral h - 1)) :: Double) ++ "%.")
+      hFlush stdout
     for_ [0..(w - 1)] $ \x -> do
        let i = (h - y - 1) * w + x
        for_ [0..1] $ \sy ->
@@ -375,13 +380,16 @@ main = do
              old <- MV.unsafeRead c i
              MV.unsafeWrite c i $! (old `addColor` clampedRes)
 
-  let header = ("P3\n" ++ show w ++ " " ++ show h ++ "\n255\n")
+  case output of
+    Nothing -> pure ()
+    Just filename -> do
+      let header = ("P3\n" ++ show w ++ " " ++ show h ++ "\n255\n")
 
-  withFile  "image_hs.ppm" WriteMode $ \handle -> do
-    hPutStr handle header
-    for_ [0..(w * h) - 1] $ \i -> do
-      v <- MV.unsafeRead c i
-      hPutStr handle (v2c v)
+      withFile filename WriteMode $ \handle -> do
+        hPutStr handle header
+        for_ [0..(w * h) - 1] $ \i -> do
+          v <- MV.unsafeRead c i
+          hPutStr handle (v2c v)
 
 translate :: Position -> Direction k -> Position
 translate (Position p) (Direction d) = Position (p .+. d)

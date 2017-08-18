@@ -7,8 +7,7 @@ You can run a benchmark compared to the original smallpt (the explicit
 version) using `Bench`:
 
 ```
-stack build
-stack exec Bench
+stack bench
 ```
 
 Result:
@@ -46,10 +45,21 @@ smallpt code.
 
 # Benchmark consideration
 
-For now, we don't bench multi-core. The Haskell or CPP code is benched
-sequentially, which is better for Haskell.
-
 Due to a difference in random number generation, we are not sure
 that's really the same code which is executed. However, the current 3x
 slowdown cannot be just because of a totally different space
 exploration.
+
+# image output
+
+```
+stack build
+stack exec SmallPTHS -- 4 output.ppm
+```
+
+or, for the CPP version
+
+```
+make -C CPP
+./CPP/smallpt 4 output.ppm
+```
