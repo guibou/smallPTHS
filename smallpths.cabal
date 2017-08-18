@@ -27,15 +27,19 @@ executable SmallPTHS
                      , mwc-random
                      , vector
                      , ghc-prim
+                     , async
   default-language:    Haskell2010
 
-executable Bench
+benchmark Bench
+  type: exitcode-stdio-1.0
   hs-source-dirs:      app
   main-is:             Bench.hs
   ghc-options:         -Wall -O2 -threaded -with-rtsopts "-N"
   build-depends:       base
-                     , process
+                     , typed-process
                      , clock
+                     , bytestring
+                     , async
   default-language:    Haskell2010
 
 -- test-suite smallpths-test

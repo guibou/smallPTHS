@@ -67,4 +67,4 @@ extra-package-dbs: []
 
 nix:
   enable: true
-  packages: [llvm_37 stack gcc]
+  packages: [llvm_37 stack gcc zlib which]
