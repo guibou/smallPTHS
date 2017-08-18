@@ -22,7 +22,7 @@ cabal-version:       >=1.10
 executable SmallPTHS
   hs-source-dirs:      app
   main-is:             SmallPTHS.hs
-  ghc-options:         -fllvm -O2 -funbox-strict-fields -Wall -fno-full-laziness
+  ghc-options:         -fllvm -O2 -funbox-strict-fields -Wall -fno-full-laziness -threaded -rtsopts -with-rtsopts "-N"
   build-depends:       base
                      , mwc-random
                      , vector
@@ -32,7 +32,7 @@ executable SmallPTHS
 executable Bench
   hs-source-dirs:      app
   main-is:             Bench.hs
-  ghc-options:         -Wall
+  ghc-options:         -Wall -O2 -threaded -with-rtsopts "-N"
   build-depends:       base
                      , process
                      , clock

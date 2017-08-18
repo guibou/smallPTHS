@@ -21,6 +21,8 @@ import Data.Foldable (foldlM, foldl')
 import System.Environment (getArgs)
 import GHC.Prim (RealWorld)
 import qualified Data.Vector.Mutable as MV
+import Control.Concurrent.Async
+import Control.Monad (when)
 
 ------------------------------------------------------
 -- Vec private API
@@ -346,7 +348,7 @@ main = do
   gen <- create
 
   c <- MV.replicate (h * w) Black
-  for_ [0 .. (h - 1)] $ \y -> do
+  forConcurrently_ [0 .. (h - 1)] $ \y -> do
     putStr ("\rRendering (" ++ show (samps * 4) ++ " spp) " ++ show ((100 * fromIntegral y / (fromIntegral h - 1)) :: Double) ++ "%.")
     hFlush stdout
     for_ [0..(w - 1)] $ \x -> do
