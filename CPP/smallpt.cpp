@@ -207,7 +207,7 @@ main (int argc, char *argv[])
     Vec cx = Vec (w * .5135 / h), cy = (cx % cam.d).norm () * .5135, r, *c =
         new Vec[w * h];
 
-    const bool display = argc == 2;
+    const bool display = argc == 3;
 
 #pragma omp parallel for schedule(dynamic, 1) private(r)    // OpenMP
     for (int y = 0; y < h; y++)
@@ -243,7 +243,7 @@ main (int argc, char *argv[])
 
     if(display)
     {
-        FILE *f = fopen (argv[1], "w");    // Write image to PPM file.
+        FILE *f = fopen (argv[2], "w");    // Write image to PPM file.
         fprintf (f, "P3\n%d %d\n%d\n", w, h, 255);
         for (int i = 0; i < w * h; i++)
             fprintf (f, "%d %d %d ", toInt (c[i].x), toInt (c[i].y), toInt (c[i].z));
