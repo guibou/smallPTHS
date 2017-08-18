@@ -139,11 +139,12 @@ radiance (const Ray & r, int depth, unsigned short *Xi, int E = 1)
 
         // Loop over any lights
         Vec e;
-        for (int i = 0; i < numSpheres; i++)
+        //for (int i = 0; i < numSpheres; i++)
+        int i = 8; // this is the only lit light. HACK (todo)
         {
             const Sphere & s = spheres[i];
-            if (s.e.x <= 0 && s.e.y <= 0 && s.e.z <= 0)
-                continue;        // skip non-lights
+            //if (s.e.x <= 0 && s.e.y <= 0 && s.e.z <= 0)
+            //    continue;        // skip non-lights
 
             Vec sw = s.p - x, su =
                 ((fabs (sw.x) > .1 ? Vec (0, 1) : Vec (1)) % sw).norm (), sv =
