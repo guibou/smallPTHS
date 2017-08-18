@@ -22,7 +22,7 @@ cabal-version:       >=1.10
 executable SmallPTHS
   hs-source-dirs:      app
   main-is:             SmallPTHS.hs
-  ghc-options:         -fllvm -O2 -funbox-strict-fields -Wall -fno-full-laziness -threaded -rtsopts -with-rtsopts "-N"
+  ghc-options:         -fllvm -O2 -funbox-strict-fields -Wall -threaded -rtsopts -with-rtsopts "-N"
   build-depends:       base
                      , mwc-random
                      , vector
