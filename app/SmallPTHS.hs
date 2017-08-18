@@ -1,3 +1,6 @@
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
@@ -7,6 +10,7 @@
 {-# LANGUAGE Strict #-}
 {-# LANGUAGE StrictData #-}
 {-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 module Main where
 
@@ -20,9 +24,10 @@ import Text.Read (readMaybe)
 import Data.Foldable (foldlM, foldl')
 import System.Environment (getArgs)
 import GHC.Prim (RealWorld)
-import qualified Data.Vector.Mutable as MV
+import qualified Data.Vector.Unboxed.Mutable as MV
 import Control.Concurrent.Async
 import Control.Monad (when)
+import Data.Vector.Unboxed.Deriving
 
 ------------------------------------------------------
 -- Vec private API
@@ -74,6 +79,11 @@ data NormalizedStatus = NotNormalized | Normalized
 newtype Direction (k :: NormalizedStatus) = Direction Vec deriving (Show)
 
 newtype Color = Color Vec deriving (Show)
+
+derivingUnbox "Vec"
+    [t| Color -> (Double, Double, Double) |]
+    [| \ (Color (Vec a b c)) -> (a, b, c) |]
+    [| \ (a, b, c) -> (Color (Vec a b c)) |]
 
 directionFromTo :: Position -> Position -> Direction 'NotNormalized
 directionFromTo (Position from) (Position to) = Direction (to .-. from)
