@@ -87,7 +87,17 @@ Sphere spheres[] = {        //Scene: radius, position, emission, color, material
     Sphere (1.5, Vec (50, 81.6 - 16.5, 81.6), Vec (4, 4, 4) * 100, Vec (), DIFF),    //Lite
 };
 
+struct LightId
+{
+	const Sphere *sphere;
+	int id;
+};
+
+LightId lights[] = {{&spheres[8], 8}}; // TODO: generate this array at runtime
+
 int numSpheres = sizeof (spheres) / sizeof (Sphere);
+int numLights = sizeof (lights) / sizeof (LightId);
+
 inline double
 clamp (double x)
 {
@@ -139,12 +149,10 @@ radiance (const Ray & r, int depth, unsigned short *Xi, int E = 1)
 
         // Loop over any lights
         Vec e;
-        //for (int i = 0; i < numSpheres; i++)
-        int i = 8; // this is the only lit light. HACK (todo)
+        for (int i = 0; i < numLights; i++)
         {
-            const Sphere & s = spheres[i];
-            //if (s.e.x <= 0 && s.e.y <= 0 && s.e.z <= 0)
-            //    continue;        // skip non-lights
+            const auto & lid = lights[i];
+            const Sphere &s = *lid.sphere;
 
             Vec sw = s.p - x, su =
                 ((fabs (sw.x) > .1 ? Vec (0, 1) : Vec (1)) % sw).norm (), sv =
@@ -158,7 +166,7 @@ radiance (const Ray & r, int depth, unsigned short *Xi, int E = 1)
             Vec l =
                 su * cos (phi) * sin_a + sv * sin (phi) * sin_a + sw * cos_a;
             l.norm ();
-            if (intersect (Ray (x, l), t, id) && id == i)
+            if (intersect (Ray (x, l), t, id) && id == lid.id)
             {            // shadow ray
                 double omega = 2 * M_PI * (1 - cos_a_max);
                 e = e + f.mult (s.e * l.dot (nl) * omega) * M_1_PI;    // 1/pi for brdf
