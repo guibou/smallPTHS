@@ -14,9 +14,7 @@
 
 module Main where
 
-import Data.Maybe (mapMaybe, listToMaybe, isJust)
-import Data.List (minimumBy)
-import Data.Ord (comparing)
+import Data.Maybe (listToMaybe, isJust)
 import Data.Foldable (for_)
 import System.IO (hFlush, stdout, withFile, IOMode(..), hPutStr)
 import System.Random.MWC (create, uniform, Gen)
@@ -175,13 +173,14 @@ toInt :: Double -> Int
 toInt x = truncate (((clamp x) ** (1 / 2.2)) * 255 + 0.5)
 
 intersectScene :: Ray -> Maybe Intersect
-intersectScene ray =
-  let
-    its = mapMaybe (intersectSphere ray) spheres
-  in
-    case its of
-      [] -> Nothing
-      _ -> Just (minimumBy (comparing getT) its)
+intersectScene ray = foldl' findIntersect Nothing spheres
+  where
+    findIntersect Nothing s = intersectSphere ray s
+    findIntersect (old@(Just (Intersect _ oldT))) s = case intersectSphere ray s of
+      Nothing -> old
+      new@(Just (Intersect _ newT)) -> if newT < oldT
+        then new
+        else old
 
 radianceDiffuse :: Gen RealWorld -> Ray -> Int -> IO Color
 radianceDiffuse gen r depth = radiance gen r depth 1
