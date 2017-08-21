@@ -51,7 +51,7 @@ main = do
 
   -- Bench CPP
   -- build
-  _ <- progress "Building CPP" $ runProcess_ (proc "make" ["-C", "CPP", "-q"])
+  _ <- progress "Building CPP" $ runProcess_ (proc "make" ["-C", "CPP", "-s"])
   cppTimePar <- progress "CPP (parallel)" $ (runProcess_ (proc "./CPP/smallpt" ["4"]))
   cppTimeSeq <- progress "CPP (sequential)" $ (runProcess_ (setEnv [("OMP_NUM_THREADS", "1")] $ proc "./CPP/smallpt" ["4"]))
 
