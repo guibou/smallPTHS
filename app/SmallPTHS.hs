@@ -61,42 +61,122 @@ infixl 7 .*
 
 (Vec a b c) .* s = Vec (a * s) (b * s) (c * s)
 
-normalize :: Direction 'NotNormalized -> Direction 'NotNormalized
-normalize (Direction(v@(Vec a b c))) = Direction (v .* (1 / norm))
-  where norm = sqrt (a * a + b * b + c * c)
-
 dot :: Vec -> Vec -> Double
 dot (Vec a b c) (Vec a' b' c') = a * a' + b * b' + c * c'
 
 ----------------------------------------------------------
+-- Vec public API (Position, Direction, Color)
+----------------------------------------------------------
 
+-- | A point in Space
 newtype Position = Position Vec deriving (Show)
 
+
+-- | A direction, can be normalized or not
+newtype Direction (k :: NormalizedStatus) = Direction Vec deriving (Show)
 data NormalizedStatus = NotNormalized | Normalized
 
-newtype Direction (k :: NormalizedStatus) = Direction Vec deriving (Show)
-
+-- | A color
 newtype Color = Color Vec deriving (Show)
 
-derivingUnbox "Vec"
+-- which can be unboxed for the image storage
+derivingUnbox "Color"
     [t| Color -> (Double, Double, Double) |]
     [| \ (Color (Vec a b c)) -> (a, b, c) |]
     [| \ (a, b, c) -> (Color (Vec a b c)) |]
 
+-- Shitload of function on Position / Direction / Color
+-- I tried to be as typesafe as possible. This is more complicated
+-- than the original smallpt.cpp, but gives something more readable / safe
+-- (that's my opinion)
+
+-- Direction and Positions
+
+-- | Normalize a direction
+normalize :: Direction 'NotNormalized -> Direction 'NotNormalized
+normalize (Direction(v@(Vec a b c))) = Direction (v .* (1 / norm))
+  where norm = sqrt (a * a + b * b + c * c)
+
+-- | Create the direction AB from A and B
 directionFromTo :: Position -> Position -> Direction 'NotNormalized
 directionFromTo (Position from) (Position to) = Direction (to .-. from)
-project :: Direction k -> Direction 'NotNormalized -> Double
+
+-- | Project a direction onto another
+project :: Direction k -> Direction k' -> Double
 project (Direction d) (Direction nd) = d `dot` nd
 
+-- | Cosinus of the angle between two normalized direction
 cosinus :: Direction 'NotNormalized -> Direction 'NotNormalized -> Double
 cosinus (Direction d) (Direction nd) = d `dot` nd
 
+-- | Squared norm
 norm2 :: Direction 'NotNormalized -> Double
 norm2 (Direction d) = d `dot` d
+
+mkPosition :: Double -> Double -> Double -> Position
+mkPosition x y z = Position (Vec x y z)
+
+mkColor :: Double -> Double -> Double -> Color
+mkColor x y z = Color (Vec x y z)
+
+mkDirection :: Double -> Double -> Double -> Direction 'NotNormalized
+mkDirection a b c = Direction (Vec a b c)
+
+minus :: Direction k -> Direction k' -> Direction 'NotNormalized
+minus (Direction d) (Direction d') = Direction (d .-. d')
+
+scale :: Direction k -> Double -> Direction 'NotNormalized
+scale (Direction d) f = Direction (d .* f)
+
+reverseDirection :: Direction k -> Direction k
+reverseDirection (Direction d) = Direction (d .* (-1))
+
+translate :: Position -> Direction k -> Position
+translate (Position p) (Direction d) = Position (p .+. d)
+
+-- Basis
+
+-- | Return an orthogonal direction between two directions
+orthogonalDirection :: Direction k -> Direction k' -> Direction 'NotNormalized
+orthogonalDirection (Direction a) (Direction b) = Direction (a .%. b)
+
+-- | `rotateBasis (x, y, z) v` rotates the vector `v` to the new basis `(x, y, z)`
+rotateBasis :: (Direction k, Direction k, Direction k) -> Direction k -> Direction k
+rotateBasis (Direction bx, Direction by, Direction bz) (Direction (Vec x y z)) = Direction (bx .* x .+. by .* y .+. bz .* z)
+
+arbitraryOrthogonal :: Direction k -> Direction 'NotNormalized
+arbitraryOrthogonal (Direction d@(Vec x _ _))
+  | abs x > 0.1 = Direction (Vec 0 1 0 .%. d)
+  | otherwise = Direction (Vec 1 0 0 .%. d)
+
+-- Colors
 
 isBlack :: Color -> Bool
 isBlack Black = True
 isBlack _ = False
+
+scaleColor :: Color -> Double -> Color
+scaleColor (Color c) f = Color (c .* f)
+
+clamp :: (Num a, Ord a) => a -> a
+clamp x = min 1 (max 0 x)
+
+toInt :: Double -> Int
+toInt x = truncate (((clamp x) ** (1 / 2.2)) * 255 + 0.5)
+
+mulColor :: Color -> Color -> Color
+mulColor (Color c) (Color c') = Color (c .*. c')
+
+addColor :: Color -> Color -> Color
+addColor (Color c) (Color c') = Color (c .+. c')
+
+-- | returns the maximum component of a color
+maxComp :: Color -> Double
+maxComp (Color (Vec r g b)) = max r (max g b)
+
+clampV :: Color -> Color
+clampV (Color (Vec a b c)) = Color (Vec (clamp a) (clamp b) (clamp c))
+
 
 --- Sampling
 data Sample2D = Sample2D !Double !Double
@@ -104,23 +184,35 @@ data Sample2D = Sample2D !Double !Double
 
 sample2D :: Gen RealWorld -> IO Sample2D
 sample2D gen = Sample2D <$> uniform gen <*> uniform gen
----
 
+sample1D :: Gen RealWorld -> IO Double
+sample1D = uniform
+
+---
+-- Real raytracing stuffs stats now
+--
+
+-- | A ray
 data Ray = Ray {origin :: !Position, direction :: !(Direction 'NotNormalized)} deriving (Show)
 
-data Refl_t = DIFF | SPEC | REFR deriving (Show)
+-- | Basic material model
+data MaterialModel = Diffuse
+            | Mirror
+            | Glass
+            deriving (Show)
 
 data Sphere = Sphere {
   radius :: !Double,
-  position :: !Position,
+  position :: !Position, -- ^ Center of the sphere
   emission :: !Color,
   color :: !Color,
-  refl :: !Refl_t
+  refl :: !MaterialModel
   } deriving (Show)
 
+
 data Intersect = Intersect {
-  getObj :: !Sphere,
-  getT :: !Double
+  getObj :: !Sphere, -- ^ The intersected object
+  getT :: !Double -- ^ The intersection distance
   } deriving (Show)
 
 intersectSphere :: Ray -> Sphere -> Maybe Intersect
@@ -141,36 +233,21 @@ intersectSphere Ray{..} s@Sphere{..} =
       | tb > eps -> Just (Intersect s tb)
       | otherwise -> Nothing
 
-mkPosition :: Double -> Double -> Double -> Position
-mkPosition x y z = Position (Vec x y z)
-
-mkColor :: Double -> Double -> Double -> Color
-mkColor x y z = Color (Vec x y z)
-
-scaleColor :: Color -> Double -> Color
-scaleColor (Color c) f = Color (c .* f)
-
 spheres :: [Sphere]
 spheres = [
-   Sphere 1e5  (mkPosition  (1e5+1) 40.8 81.6)  Black (mkColor 0.75 0.25 0.25) DIFF -- Left
-  ,Sphere 1e5  (mkPosition (-1e5+99) 40.8 81.6) Black (mkColor 0.25 0.25 0.75) DIFF -- Rght
-  ,Sphere 1e5  (mkPosition 50 40.8  1e5)      Black (mkColor 0.75 0.75 0.75) DIFF -- Back
-  ,Sphere 1e5  (mkPosition 50 40.8 (-1e5+170))  Black Black            DIFF -- Frnt
-  ,Sphere 1e5  (mkPosition 50  1e5  81.6)     Black (mkColor 0.75 0.75 0.75) DIFF -- Botm
-  ,Sphere 1e5  (mkPosition 50 (-1e5+81.6) 81.6) Black (mkColor 0.75 0.75 0.75) DIFF -- Top
-  ,Sphere 16.5 (mkPosition 27 16.5 47)        Black ((mkColor 1 1 1)`scaleColor`0.999)  SPEC -- Mirr
-  ,Sphere 16.5 (mkPosition 73 16.5 78)        Black ((mkColor 1 1 1)`scaleColor`0.999)  REFR -- Glas
-  ,Sphere 1.5  (mkPosition 50 (81.6-16.5) 81.6) ((mkColor 4 4 4)`scaleColor`100)   Black  DIFF -- Lite
+   Sphere 1e5  (mkPosition  (1e5+1) 40.8 81.6)  Black (mkColor 0.75 0.25 0.25) Diffuse -- Left
+  ,Sphere 1e5  (mkPosition (-1e5+99) 40.8 81.6) Black (mkColor 0.25 0.25 0.75) Diffuse -- Rght
+  ,Sphere 1e5  (mkPosition 50 40.8  1e5)      Black (mkColor 0.75 0.75 0.75) Diffuse -- Back
+  ,Sphere 1e5  (mkPosition 50 40.8 (-1e5+170))  Black Black            Diffuse -- Frnt
+  ,Sphere 1e5  (mkPosition 50  1e5  81.6)     Black (mkColor 0.75 0.75 0.75) Diffuse -- Botm
+  ,Sphere 1e5  (mkPosition 50 (-1e5+81.6) 81.6) Black (mkColor 0.75 0.75 0.75) Diffuse -- Top
+  ,Sphere 16.5 (mkPosition 27 16.5 47)        Black ((mkColor 1 1 1)`scaleColor`0.999)  Mirror -- Mirr
+  ,Sphere 16.5 (mkPosition 73 16.5 78)        Black ((mkColor 1 1 1)`scaleColor`0.999)  Glass -- Glas
+  ,Sphere 1.5  (mkPosition 50 (81.6-16.5) 81.6) ((mkColor 4 4 4)`scaleColor`100)   Black  Diffuse -- Lite
   ]
 
 lights :: [Sphere]
 lights = filter (not . isBlack . emission) spheres
-
-clamp :: (Num a, Ord a) => a -> a
-clamp x = min 1 (max 0 x)
-
-toInt :: Double -> Int
-toInt x = truncate (((clamp x) ** (1 / 2.2)) * 255 + 0.5)
 
 intersectScene :: Ray -> Maybe Intersect
 intersectScene ray = foldl' findIntersect Nothing spheres
@@ -182,21 +259,27 @@ intersectScene ray = foldl' findIntersect Nothing spheres
         then new
         else old
 
-radianceDiffuse :: Gen RealWorld -> Ray -> Int -> IO Color
-radianceDiffuse gen r depth = radiance gen r depth 1
-radianceSpecular :: Gen RealWorld -> Ray -> Int -> IO Color
-radianceSpecular gen r depth = radiance gen r depth 0
+-- | `reflect wi n` returns the reflected direction
+-- TODO: find a way to represent this API without a risk of swapping
+-- both direction. For example, introduce a new type for Normal
+reflect :: Direction 'NotNormalized -> Direction 'NotNormalized -> Direction 'NotNormalized
+reflect (Direction direction) (Direction n) = Direction (direction .-. (n .* (2 * n `dot` (direction))))
 
-arbitraryOrthogonal :: Direction k -> Direction 'NotNormalized
-arbitraryOrthogonal (Direction d@(Vec x _ _))
-  | abs x > 0.1 = Direction (Vec 0 1 0 .%. d)
-  | otherwise = Direction (Vec 1 0 0 .%. d)
+-- Direct Lighting
 
+-- | Compute direct lighting at a point
 getDiffuseDirect :: Sample2D -> Position -> Direction 'NotNormalized -> Color
-getDiffuseDirect (Sample2D eps1 eps2) x nl = foldl' addColor Black (map getALightContrib lights)
+getDiffuseDirect (Sample2D eps1 eps2) x nl = foldl' addColor Black (map getALightContrib lights) -- sum of all light contributions
   where
     getALightContrib :: Sphere -> Color
     getALightContrib s@(Sphere{..}) = do
+          -- This especially contrived code generates a sampling
+          -- direction on point `position` and on the direction of the
+          -- lighting sphere
+
+          -- it generates the direction with a probability density function with respect to position
+          -- which cancels with the final contribution
+          -- Seriously, I should check thoses maths
           let sw = directionFromTo x position
               su = normalize (arbitraryOrthogonal sw)
               sv = sw `orthogonalDirection` su
@@ -211,7 +294,11 @@ getDiffuseDirect (Sample2D eps1 eps2) x nl = foldl' addColor Black (map getALigh
                                                           cos_a))
 
 
-              -- this is silly, but, well ;)
+              -- this is silly, but, well, we compute the intersection with the lighting sphere
+              -- and compare it with the intersection in the scene
+              -- if they are the same, well, there is not object closer than the lighting sphere
+
+              -- TODO: smarter intersection primitive with early exit
               itSphere = intersectSphere (Ray x l) s
           case (itSphere, intersectScene (Ray x l)) of
             (Just it, Just it') ->  if (getT it) == (getT it')
@@ -220,12 +307,12 @@ getDiffuseDirect (Sample2D eps1 eps2) x nl = foldl' addColor Black (map getALigh
                         else Black
             _ -> Black
 
-mixColor :: Color -> Color -> Color
-mixColor (Color c) (Color c') = Color (c .*. c')
+-- | Returns the mirror indirect direction, with a scaling factor
+getMirrorIndirect :: Position -> Direction 'NotNormalized -> Direction 'NotNormalized -> IO (Ray, Double)
+getMirrorIndirect x direction n = pure (Ray x (reflect direction n), 1)
+-- Here the scaling factor is equal to the density probability, which is 1 (well, there is no density probability)
 
-addColor :: Color -> Color -> Color
-addColor (Color c) (Color c') = Color (c .+. c')
-
+-- | Returns the diffuse indirect direction, with a scaling factor
 getDiffuseIndirect :: Sample2D -> Direction 'NotNormalized -> Position -> (Ray, Double)
 getDiffuseIndirect (Sample2D su r2) nl x =
                   let pi2 = (2 * pi) :: Double
@@ -240,18 +327,13 @@ getDiffuseIndirect (Sample2D su r2) nl x =
                                                              (sqrt (1 - r2)))
 
                   in ((Ray x d), 1)
+-- Here the scaling factor is equal to the cosinus contribution of the
+-- surface divided by the density probability, which is the same (we
+-- did that on purpose ;) So 1 ;)
 
-reflect :: Direction 'NotNormalized -> Direction 'NotNormalized -> Direction 'NotNormalized
-reflect (Direction direction) (Direction n) = Direction (direction .-. (n .* (2 * n `dot` (direction))))
-
-getSpecularIndirect :: Position -> Direction 'NotNormalized -> Direction 'NotNormalized -> IO (Ray, Double)
-getSpecularIndirect x direction n = pure (Ray x (reflect direction n), 1)
-
-minus :: Direction k -> Direction k' -> Direction 'NotNormalized
-minus (Direction d) (Direction d') = Direction (d .-. d')
-
-getRefractionIndirect :: Sample2D -> Direction 'NotNormalized -> Position -> Direction 'NotNormalized -> Direction 'NotNormalized -> (Ray, Double)
-getRefractionIndirect (Sample2D rnd _) nl x direction n =
+-- | Returns the glass indirect direction, with a scaling factor
+getGlassIndirect :: Sample2D -> Direction 'NotNormalized -> Position -> Direction 'NotNormalized -> Direction 'NotNormalized -> (Ray, Double)
+getGlassIndirect (Sample2D rnd _) nl x direction n =
                   let reflRay = Ray x (reflect direction n)
                       into = n `cosinus` nl > 0
                       nc = 1
@@ -276,55 +358,63 @@ getRefractionIndirect (Sample2D rnd _) nl x direction n =
 
                       if rnd < p''
                         then (reflRay, rp)
-                        else (Ray x tdir, tp)
+                        else (Ray x tdir, tp) -- Scaling factor is the probability of selecting reflection or refraction
 
+-- | Compute the light at a point, it may eventually generate indirect rays
 reflectBSDF :: Gen RealWorld -> Sphere -> Direction 'NotNormalized -> Position -> Int -> Direction 'NotNormalized -> Direction 'NotNormalized -> Color -> IO Color
 reflectBSDF gen obj nl x depth direction n f = do
               sample <- sample2D gen
               case refl obj of
-                DIFF -> do
+                Diffuse -> do
                   let direct = getDiffuseDirect sample x nl
                       (iRay, iWeight) = getDiffuseIndirect sample nl x
 
                   indirect <- radiance gen iRay (depth + 1) 1
-                  pure (f `mixColor` (direct `addColor` (indirect `scaleColor` iWeight)))
-                SPEC -> do
-                  (iRay, iWeight) <- getSpecularIndirect x direction n
+                  pure (f `mulColor` (direct `addColor` (indirect `scaleColor` iWeight)))
+                Mirror -> do
+                  (iRay, iWeight) <- getMirrorIndirect x direction n
 
                   indirect <- radiance gen iRay (depth + 1) 1
 
-                  pure (f `mixColor` indirect `scaleColor` iWeight)
-                REFR -> do
-                  let (iRay, iWeight) = getRefractionIndirect sample nl x direction n
+                  pure (f `mulColor` indirect `scaleColor` iWeight)
+                Glass -> do
+                  let (iRay, iWeight) = getGlassIndirect sample nl x direction n
 
                   indirect <- radiance gen iRay (depth + 1) 1
 
-                  pure (f `mixColor` indirect `scaleColor` iWeight)
+                  pure (f `mulColor` indirect `scaleColor` iWeight)
+  -- TODO: refactor everything here. This piece of code should be something like:
+  {-
+      direct = getDirectLighting material frame
+      indirect <- getIndirectLighting material frame
 
-scale :: Direction k -> Double -> Direction 'NotNormalized
-scale (Direction d) f = Direction (d .* f)
+      With material a material description and frame a local frame with informations such as position, incident ray and normals
+  -}
 
-reverseDirection :: Direction k -> Direction k
-reverseDirection (Direction d) = Direction (d .* (-1))
+radianceDiffuse :: Gen RealWorld -> Ray -> Int -> IO Color
+radianceDiffuse gen r depth = radiance gen r depth 1
 
-maxComp :: Color -> Double
-maxComp (Color (Vec r g b)) = max r (max g b)
+radianceMirror :: Gen RealWorld -> Ray -> Int -> IO Color
+radianceMirror gen r depth = radiance gen r depth 0
 
 radiance :: Gen RealWorld -> Ray -> Int -> Int -> IO Color
 radiance gen r@Ray{..} depth e' = do
   case intersectScene r of
     Nothing -> pure Black
     Just (Intersect obj t) -> do
-      let x = origin `translate` (scale direction t)
-          n = normalize (directionFromTo (position obj) x)
-          nl = if direction `cosinus` n < 0 then n else reverseDirection n
+      let x = origin `translate` (scale direction t) -- Intersection position
+          n = normalize (directionFromTo (position obj) x) -- Normal
+          nl = if direction `cosinus` n < 0 then n else reverseDirection n -- Normal oriented on the right side
           f = color obj
           p' = maxComp f
 
           ref = reflectBSDF gen obj nl x depth direction n
+
+      -- only RR after depth > 5
       if (depth + 1) > 5 || p' == 0
         then do
-          rv <- uniform gen
+          rv <- sample1D gen
+          -- Russian rulette, to continue or not
           if rv < p'
             then do
               res <- ref (f `scaleColor` (1 / p'))
@@ -333,15 +423,6 @@ radiance gen r@Ray{..} depth e' = do
         else do
            res <- ref f
            pure (emission obj `scaleColor` (fromIntegral e') `addColor` res)
-
-mkDirection :: Double -> Double -> Double -> Direction 'NotNormalized
-mkDirection a b c = Direction (Vec a b c)
-
-orthogonalDirection :: Direction k -> Direction k' -> Direction 'NotNormalized
-orthogonalDirection (Direction a) (Direction b) = Direction (a .%. b)
-
-rotateBasis :: (Direction k, Direction k, Direction k) -> Direction k -> Direction k
-rotateBasis (Direction bx, Direction by, Direction bz) (Direction (Vec x y z)) = Direction (bx .* x .+. by .* y .+. bz .* z)
 
 main :: IO ()
 main = do
@@ -367,6 +448,9 @@ main = do
       hFlush stdout
     for_ [0..(w - 1)] $ \x -> do
        let i = (h - y - 1) * w + x
+
+       -- super sampling in a grid
+       -- TODO: this sucks ;)
        for_ [0..1] $ \sy ->
           for_ [0..1] $ \sx -> do
              let fFold accum _ = do
@@ -400,11 +484,5 @@ main = do
           v <- MV.unsafeRead c i
           hPutStr handle (v2c v)
 
-translate :: Position -> Direction k -> Position
-translate (Position p) (Direction d) = Position (p .+. d)
-
 v2c :: Color -> [Char]
 v2c (Color (Vec a b c)) = show (toInt a) ++ " " ++ show (toInt b) ++ " " ++ show (toInt c) ++ " "
-
-clampV :: Color -> Color
-clampV (Color (Vec a b c)) = Color (Vec (clamp a) (clamp b) (clamp c))
