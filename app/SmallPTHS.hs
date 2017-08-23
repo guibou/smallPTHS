@@ -382,7 +382,7 @@ main = do
                                                                         1)
 
                          rad <- radiance gen (Ray (origin cam `translate` (scale d' 140)) (normalize d')) 0 1
-                         pure $ accum `addColor` rad
+                         pure $ accum `addColor` (rad `scaleColor` (1 / fromIntegral samps))
              rad <- foldlM fFold Black [0..(samps - 1)]
              let clampedRes = clampV rad `scaleColor` 0.25
 
