@@ -43,7 +43,7 @@ main = do
   putStrLn ""
 
   -- Bench HS
-  hsTimePar <- progress "Haskell (parallel)" $ (runProcess_ (proc (init (unpack name)) ["4", "+RTS", "-N"]))
+  hsTimePar <- progress "Haskell (parallel)" $ (runProcess_ (proc (init (unpack name)) ["4", "+RTS", "-N", "-qg"]))
   hsTimeSeq <- progress "Haskell (sequential)" $ (runProcess_ (proc (init (unpack name)) ["4", "+RTS", "-N1"]))
 
   putStrLn ("Haskell speedup: " ++ show @Double (fromIntegral hsTimeSeq / fromIntegral hsTimePar))
