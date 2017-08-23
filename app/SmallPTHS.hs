@@ -369,18 +369,18 @@ reflectBSDF gen obj nl x depth direction n f = do
                   let direct = getDiffuseDirect sample x nl
                       (iRay, iWeight) = getDiffuseIndirect sample nl x
 
-                  indirect <- radiance gen iRay (depth + 1) 1
+                  indirect <- radiance gen iRay (depth + 1) False
                   pure (f `mulColor` (direct `addColor` (indirect `scaleColor` iWeight)))
                 Mirror -> do
                   (iRay, iWeight) <- getMirrorIndirect x direction n
 
-                  indirect <- radiance gen iRay (depth + 1) 1
+                  indirect <- radiance gen iRay (depth + 1) True
 
                   pure (f `mulColor` indirect `scaleColor` iWeight)
                 Glass -> do
                   let (iRay, iWeight) = getGlassIndirect sample nl x direction n
 
-                  indirect <- radiance gen iRay (depth + 1) 1
+                  indirect <- radiance gen iRay (depth + 1) True
 
                   pure (f `mulColor` indirect `scaleColor` iWeight)
   -- TODO: refactor everything here. This piece of code should be something like:
@@ -391,14 +391,8 @@ reflectBSDF gen obj nl x depth direction n f = do
       With material a material description and frame a local frame with informations such as position, incident ray and normals
   -}
 
-radianceDiffuse :: Gen RealWorld -> Ray -> Int -> IO Color
-radianceDiffuse gen r depth = radiance gen r depth 1
-
-radianceMirror :: Gen RealWorld -> Ray -> Int -> IO Color
-radianceMirror gen r depth = radiance gen r depth 0
-
-radiance :: Gen RealWorld -> Ray -> Int -> Int -> IO Color
-radiance gen r@Ray{..} depth e' = do
+radiance :: Gen RealWorld -> Ray -> Int -> Bool -> IO Color
+radiance gen r@Ray{..} depth useEmission = do
   case intersectScene r of
     Nothing -> pure Black
     Just (Intersect obj t) -> do
@@ -410,19 +404,21 @@ radiance gen r@Ray{..} depth e' = do
 
           ref = reflectBSDF gen obj nl x depth direction n
 
+          emit = if useEmission
+                 then emission obj
+                 else Black
+
       -- only RR after depth > 5
-      if (depth + 1) > 5 || p' == 0
+      res <- if (depth + 1) > 5 || p' == 0
         then do
           rv <- sample1D gen
           -- Russian rulette, to continue or not
           if rv < p'
-            then do
-              res <- ref (f `scaleColor` (1 / p'))
-              pure (emission obj `scaleColor` (fromIntegral e') `addColor` res)
-            else pure (emission obj `scaleColor` (fromIntegral e'))
-        else do
-           res <- ref f
-           pure (emission obj `scaleColor` (fromIntegral e') `addColor` res)
+            then ref (f `scaleColor` (1 / p'))
+            else pure Black
+        else ref f
+
+      pure (emit `addColor` res)
 
 main :: IO ()
 main = do
@@ -465,7 +461,7 @@ main = do
                                                                         ((((sy + 0.5 + dy) / 2 + fromIntegral y) / fromIntegral h - 0.5))
                                                                         1)
 
-                         rad <- radiance gen (Ray (origin cam `translate` (scale d' 140)) (normalize d')) 0 1
+                         rad <- radiance gen (Ray (origin cam `translate` (scale d' 140)) (normalize d')) 0 True
                          pure $ accum `addColor` (rad `scaleColor` (1 / fromIntegral samps))
              rad <- foldlM fFold Black [0..(samps - 1)]
              let clampedRes = clampV rad `scaleColor` 0.25
