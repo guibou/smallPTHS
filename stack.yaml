@@ -15,7 +15,7 @@
 # resolver:
 #  name: custom-snapshot
 #  location: "./custom-snapshot.yaml"
-resolver: lts-8.11
+resolver: nightly-2017-09-10
 
 # User packages to be built.
 # Various formats can be used as shown in the example below.
@@ -67,4 +67,4 @@ extra-package-dbs: []
 
 nix:
   enable: true
-  packages: [llvm_37 stack gcc zlib which]
+  packages: [llvm_39 stack gcc zlib which]

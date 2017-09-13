@@ -11,6 +11,7 @@
 {-# LANGUAGE StrictData #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE UnboxedSums #-}
 
 module Main where
 
@@ -234,7 +235,9 @@ data Intersect = Intersect {
   getT :: !Double -- ^ The intersection distance
   } deriving (Show)
 
-intersectSphere :: Ray -> Sphere -> Maybe Intersect
+type MaybeIntersect = (# Intersect | () #)
+
+intersectSphere :: Ray -> Sphere -> MaybeIntersect
 intersectSphere Ray{..} s@Sphere{..} =
   let
     op = directionFromTo origin position
@@ -247,10 +250,10 @@ intersectSphere Ray{..} s@Sphere{..} =
     tb = b + det
   in
     if
-      | det' < 0 -> Nothing
-      | ta > eps -> Just (Intersect s ta)
-      | tb > eps -> Just (Intersect s tb)
-      | otherwise -> Nothing
+      | det' < 0 -> (#| () #)
+      | ta > eps -> (# Intersect s ta | #)
+      | tb > eps -> (# Intersect s tb | #)
+      | otherwise -> (#| () #)
 
 spheres :: [Sphere]
 spheres = [
@@ -268,13 +271,18 @@ spheres = [
 lights :: [Sphere]
 lights = filter (not . isBlack . emission) spheres
 
-intersectScene :: Ray -> Maybe Intersect
-intersectScene ray = foldl' findIntersect Nothing spheres
+myfoldl' :: (MaybeIntersect -> Sphere -> MaybeIntersect) -> MaybeIntersect -> [Sphere] -> MaybeIntersect
+myfoldl' f = go
+  where go acc [] = acc
+        go acc (x:xs) = go (f acc x) xs
+
+intersectScene :: Ray -> MaybeIntersect
+intersectScene ray = myfoldl' findIntersect (# | () #) spheres
   where
-    findIntersect Nothing s = intersectSphere ray s
-    findIntersect (old@(Just (Intersect _ oldT))) s = case intersectSphere ray s of
-      Nothing -> old
-      new@(Just (Intersect _ newT)) -> if newT < oldT
+    findIntersect (#| () #) s = intersectSphere ray s
+    findIntersect (old@((#Intersect _ oldT| #))) s = case intersectSphere ray s of
+      (#| () #) -> old
+      new@((#(Intersect _ newT)| #)) -> if newT < oldT
         then new
         else old
 
@@ -319,8 +327,8 @@ getDiffuseDirect (Sample2D eps1 eps2) x nl = foldl' addColor Black (map getALigh
 
               -- TODO: smarter intersection primitive with early exit
               itSphere = intersectSphere (Ray x l) s
-          case (itSphere, intersectScene (Ray x l)) of
-            (Just it, Just it') ->  if (getT it) == (getT it')
+          case (# itSphere, intersectScene (Ray x l) #) of
+            (# (# it | #), (# it' | #) #) ->  if (getT it) == (getT it')
                         then let omega = 2 * pi * (1 - cos_a_max)
                              in (emission `scaleColor` (l `cosinus` nl * omega / pi))
                         else Black
@@ -413,8 +421,8 @@ reflectBSDF gen obj nl x depth direction n f = do
 radiance :: Gen RealWorld -> Ray -> Int -> Bool -> IO Color
 radiance gen r@Ray{..} depth useEmission = do
   case intersectScene r of
-    Nothing -> pure Black
-    Just (Intersect obj t) -> do
+    (# | () #) -> pure Black
+    (# Intersect obj t | #) -> do
       let x = origin `translate` (scale direction t) -- Intersection position
           n = normalize (directionFromTo (position obj) x) -- Normal
           nl = if direction `cosinus` n < 0 then n else reverseDirection n -- Normal oriented on the right side
