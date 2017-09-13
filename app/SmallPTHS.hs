@@ -26,6 +26,7 @@ import qualified Data.Vector.Unboxed.Mutable as MV
 import Control.Concurrent.Async
 import Control.Monad (when)
 import Data.Vector.Unboxed.Deriving
+import Control.Exception.Base (assert)
 
 ------------------------------------------------------
 -- Vec private API
@@ -93,7 +94,7 @@ derivingUnbox "Color"
 -- Direction and Positions
 
 -- | Normalize a direction
-normalize :: Direction 'NotNormalized -> Direction 'NotNormalized
+normalize :: Direction 'NotNormalized -> Direction 'Normalized
 normalize (Direction(v@(Vec a b c))) = Direction (v .* (1 / norm))
   where norm = sqrt (a * a + b * b + c * c)
 
@@ -106,7 +107,7 @@ project :: Direction k -> Direction k' -> Double
 project (Direction d) (Direction nd) = d `dot` nd
 
 -- | Cosinus of the angle between two normalized direction
-cosinus :: Direction 'NotNormalized -> Direction 'NotNormalized -> Double
+cosinus :: Direction 'Normalized -> Direction 'Normalized -> Double
 cosinus (Direction d) (Direction nd) = d `dot` nd
 
 -- | Squared norm
@@ -141,8 +142,26 @@ orthogonalDirection :: Direction k -> Direction k' -> Direction 'NotNormalized
 orthogonalDirection (Direction a) (Direction b) = Direction (a .%. b)
 
 -- | `rotateBasis (x, y, z) v` rotates the vector `v` to the new basis `(x, y, z)`
-rotateBasis :: (Direction k, Direction k, Direction k) -> Direction k -> Direction k
+-- | (x,y,z) are assumed to be orthogonals
+rotateBasis :: (Direction 'Normalized, Direction 'Normalized, Direction 'Normalized) -> Direction 'Normalized -> Direction 'Normalized
 rotateBasis (Direction bx, Direction by, Direction bz) (Direction (Vec x y z)) = Direction (bx .* x .+. by .* y .+. bz .* z)
+
+rotateBasisUnsafe :: (Direction k, Direction k', Direction k'') -> Direction k''' -> Direction 'NotNormalized
+rotateBasisUnsafe (Direction bx, Direction by, Direction bz) (Direction (Vec x y z)) = Direction (bx .* x .+. by .* y .+. bz .* z)
+
+rotateAround :: Direction 'Normalized -> Direction 'Normalized -> Direction 'Normalized
+rotateAround w d =
+  let
+    u = normalize (arbitraryOrthogonal w)
+    v = w `orthogonalDirection` u
+  in
+    rotateBasis (u, asNormalized v, w) d
+
+mkDirectionNormalized :: Double -> Double -> Double -> Direction 'Normalized
+mkDirectionNormalized x y z = asNormalized (mkDirection x y z)
+
+asNormalized :: Direction k -> Direction 'Normalized
+asNormalized (Direction v) = assert (v `dot` v == 1) (Direction v)
 
 arbitraryOrthogonal :: Direction k -> Direction 'NotNormalized
 arbitraryOrthogonal (Direction d@(Vec x _ _))
@@ -193,7 +212,7 @@ sample1D = uniform
 --
 
 -- | A ray
-data Ray = Ray {origin :: !Position, direction :: !(Direction 'NotNormalized)} deriving (Show)
+data Ray = Ray {origin :: !Position, direction :: !(Direction 'Normalized)} deriving (Show)
 
 -- | Basic material model
 data MaterialModel = Diffuse
@@ -262,13 +281,13 @@ intersectScene ray = foldl' findIntersect Nothing spheres
 -- | `reflect wi n` returns the reflected direction
 -- TODO: find a way to represent this API without a risk of swapping
 -- both direction. For example, introduce a new type for Normal
-reflect :: Direction 'NotNormalized -> Direction 'NotNormalized -> Direction 'NotNormalized
+reflect :: Direction 'Normalized -> Direction 'Normalized -> Direction 'Normalized
 reflect (Direction direction) (Direction n) = Direction (direction .-. (n .* (2 * n `dot` (direction))))
 
 -- Direct Lighting
 
 -- | Compute direct lighting at a point
-getDiffuseDirect :: Sample2D -> Position -> Direction 'NotNormalized -> Color
+getDiffuseDirect :: Sample2D -> Position -> Direction 'Normalized -> Color
 getDiffuseDirect (Sample2D eps1 eps2) x nl = foldl' addColor Black (map getALightContrib lights) -- sum of all light contributions
   where
     getALightContrib :: Sphere -> Color
@@ -288,7 +307,7 @@ getDiffuseDirect (Sample2D eps1 eps2) x nl = foldl' addColor Black (map getALigh
               cos_a = 1 - eps1 + eps1 * cos_a_max
               sin_a = sqrt (1 - cos_a * cos_a)
               phi = 2 * pi * eps2
-              l = normalize $ (rotateBasis (su, sv, sw) (mkDirection
+              l = normalize $ (rotateBasisUnsafe (su, sv, sw) (mkDirection
                                                           (cos phi * sin_a)
                                                           (sin phi * sin_a)
                                                           cos_a))
@@ -308,31 +327,31 @@ getDiffuseDirect (Sample2D eps1 eps2) x nl = foldl' addColor Black (map getALigh
             _ -> Black
 
 -- | Returns the mirror indirect direction, with a scaling factor
-getMirrorIndirect :: Position -> Direction 'NotNormalized -> Direction 'NotNormalized -> IO (Ray, Double)
+getMirrorIndirect :: Position -> Direction 'Normalized -> Direction 'Normalized -> IO (Ray, Double)
 getMirrorIndirect x direction n = pure (Ray x (reflect direction n), 1)
 -- Here the scaling factor is equal to the density probability, which is 1 (well, there is no density probability)
 
--- | Returns the diffuse indirect direction, with a scaling factor
-getDiffuseIndirect :: Sample2D -> Direction 'NotNormalized -> Position -> (Ray, Double)
-getDiffuseIndirect (Sample2D su r2) nl x =
-                  let pi2 = (2 * pi) :: Double
-                      r1 = pi2 * su
-                      r2s = sqrt r2
-                      w = nl
-                      u = normalize (arbitraryOrthogonal w)
-                      v = w `orthogonalDirection` u
-                      d = normalize $ rotateBasis (u, v, w) (mkDirection
-                                                             (cos r1 * r2s)
-                                                             (sin r1 * r2s)
-                                                             (sqrt (1 - r2)))
+sampleCosinus :: Sample2D -> Direction 'Normalized
+sampleCosinus (Sample2D su r2) =
+  let pi2 = (2 * pi) :: Double
+      r1 = pi2 * su
+      r2s = sqrt r2
+  in mkDirectionNormalized (cos r1 * r2s) (sin r1 * r2s) (sqrt (1 - r2))
 
+-- | Returns the diffuse indirect direction, with a scaling factor
+getDiffuseIndirect :: Sample2D -> Direction 'Normalized -> Position -> (Ray, Double)
+getDiffuseIndirect sample nl x =
+                  let
+                      cosD = sampleCosinus sample
+                      d = rotateAround nl cosD
                   in ((Ray x d), 1)
+
 -- Here the scaling factor is equal to the cosinus contribution of the
 -- surface divided by the density probability, which is the same (we
 -- did that on purpose ;) So 1 ;)
 
 -- | Returns the glass indirect direction, with a scaling factor
-getGlassIndirect :: Sample2D -> Direction 'NotNormalized -> Position -> Direction 'NotNormalized -> Direction 'NotNormalized -> (Ray, Double)
+getGlassIndirect :: Sample2D -> Direction 'Normalized -> Position -> Direction 'Normalized -> Direction 'Normalized -> (Ray, Double)
 getGlassIndirect (Sample2D rnd _) nl x direction n =
                   let reflRay = Ray x (reflect direction n)
                       into = n `cosinus` nl > 0
@@ -361,7 +380,7 @@ getGlassIndirect (Sample2D rnd _) nl x direction n =
                         else (Ray x tdir, tp) -- Scaling factor is the probability of selecting reflection or refraction
 
 -- | Compute the light at a point, it may eventually generate indirect rays
-reflectBSDF :: Gen RealWorld -> Sphere -> Direction 'NotNormalized -> Position -> Int -> Direction 'NotNormalized -> Direction 'NotNormalized -> Color -> IO Color
+reflectBSDF :: Gen RealWorld -> Sphere -> Direction 'Normalized -> Position -> Int -> Direction 'Normalized -> Direction 'Normalized -> Color -> IO Color
 reflectBSDF gen obj nl x depth direction n f = do
               sample <- sample2D gen
               case refl obj of
@@ -456,7 +475,7 @@ main = do
                              dx = if r1 < 1 then sqrt(r1) -1 else 1 - sqrt(2 - r1)
                              dy = if r2 < 1 then sqrt(r2) -1 else 1 - sqrt(2 - r2)
 
-                             d' = rotateBasis (cx, cy, direction cam) (mkDirection
+                             d' = rotateBasisUnsafe (cx, cy, direction cam) (mkDirection
                                                                         ((((sx + 0.5 + dx) / 2 + fromIntegral x) / fromIntegral w - 0.5))
                                                                         ((((sy + 0.5 + dy) / 2 + fromIntegral y) / fromIntegral h - 0.5))
                                                                         1)
