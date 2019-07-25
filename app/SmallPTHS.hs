@@ -22,10 +22,9 @@ import Text.Read (readMaybe)
 import Data.Foldable (foldlM, foldl')
 import System.Environment (getArgs)
 import GHC.Prim (RealWorld)
-import qualified Data.Vector.Unboxed.Mutable as MV
+import qualified Data.Vector.Mutable as MV
 import Control.Concurrent.Async
 import Control.Monad (when)
-import Data.Vector.Unboxed.Deriving
 import Control.Exception.Base (assert)
 
 ------------------------------------------------------
@@ -79,12 +78,6 @@ data NormalizedStatus = NotNormalized | Normalized
 
 -- | A color
 newtype Color = Color Vec deriving (Show)
-
--- which can be unboxed for the image storage
-derivingUnbox "Color"
-    [t| Color -> (Double, Double, Double) |]
-    [| \ (Color (Vec a b c)) -> (a, b, c) |]
-    [| \ (a, b, c) -> (Color (Vec a b c)) |]
 
 -- Shitload of function on Position / Direction / Color
 -- I tried to be as typesafe as possible. This is more complicated

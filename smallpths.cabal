@@ -28,7 +28,7 @@ executable SmallPTHS
                      , vector
                      , ghc-prim
                      , async
-                     , vector-th-unbox
+  build-tools: llvm_6
   default-language:    Haskell2010
 
 benchmark Bench
