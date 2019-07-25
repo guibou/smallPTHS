@@ -31,6 +31,19 @@ executable SmallPTHS
   build-tools: llvm_6
   default-language:    Haskell2010
 
+executable ReallySmallPTHS
+  hs-source-dirs:      app
+  main-is:             ReallySmallPTHS.hs
+  ghc-options:         -fllvm -O2 -funbox-strict-fields -Wall -threaded -rtsopts -with-rtsopts "-N" -g3
+  build-depends:       base
+                     , mwc-random
+                     , vector
+                     , ghc-prim
+                     , async
+                     , linear
+                     , optparse-generic
+  default-language:    Haskell2010
+
 benchmark Bench
   type: exitcode-stdio-1.0
   hs-source-dirs:      app
