@@ -23,6 +23,7 @@ import GHC.Prim (RealWorld)
 import Control.Concurrent.Async
 import Options.Generic
 import Control.Monad (replicateM)
+import Data.Maybe (fromMaybe)
 
 import System.Random.MWC (create, uniform, Gen)
 
@@ -221,6 +222,7 @@ data Options = Options
   , height :: Int
   , samples :: Int
   , enableMotionBlur :: Bool
+  , timeDelta :: Maybe Double
   } deriving (Generic, Show, ParseRecord)
 
 timeStrategy :: Gen RealWorld -> Bool -> IO Double
@@ -230,17 +232,18 @@ timeStrategy gen enableMotionBlur
 
 main :: IO ()
 main = do
-  Options{outputFile, width, height, samples, enableMotionBlur} <- getRecord "Simple Ray Tracer"
+  Options{outputFile, width, height, samples, enableMotionBlur, timeDelta} <- getRecord "Simple Ray Tracer"
 
   let
     sampleCam = sampleCamera (V3 50 52 295.6) (normalize (V3 0 (-0.042612) (-1))) (width, height)
+    timeDeltaValue = fromMaybe 0 timeDelta
 
   gen <- create
 
   pixels <- forConcurrently [1..height] $ \y -> do
     for [0..(width-1)] $ \x -> do
       contributions <- replicateM samples $ do
-        cameraRay <- sampleCam (height - y, x) <$> sample2D gen <*> timeStrategy gen enableMotionBlur
+        cameraRay <- sampleCam (height - y, x) <$> sample2D gen <*> ((subtract timeDeltaValue <$> timeStrategy gen enableMotionBlur))
         radiance gen cameraRay 0 True
 
       -- sum and normalize contributions
