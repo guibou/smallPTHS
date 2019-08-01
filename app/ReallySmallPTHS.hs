@@ -43,6 +43,7 @@ data Ray
   = Ray
   { origin :: !Position
   , direction :: !Direction
+  , time :: !Double
   } deriving (Show)
 -- P = origin + t * direction
 
@@ -122,27 +123,27 @@ data Object
   deriving (Show)
 
 -- | The scene !
-spheres :: [Object]
-spheres = [
+spheres :: Double -> [Object]
+spheres time = [
    Object (Sphere 1e5  (V3  (1e5+1) 40.8 81.6))  Black               (V3 0.75 0.25 0.25)   Diffuse -- Left
   ,Object (Sphere 1e5  (V3 (-1e5+99) 40.8 81.6)) Black               (V3 0.25 0.25 0.75)   Diffuse -- Right
   ,Object (Sphere 1e5  (V3 50 40.8  1e5))        Black               (V3 0.75 0.75 0.75)   Diffuse -- Back
   ,Object (Sphere 1e5  (V3 50 40.8 (-1e5+170)))  Black               Black                 Diffuse -- Front
   ,Object (Sphere 1e5  (V3 50  1e5  81.6))       Black               (V3 0.75 0.75 0.75)   Diffuse -- Bottom
   ,Object (Sphere 1e5  (V3 50 (-1e5+81.6) 81.6)) Black               (V3 0.75 0.75 0.75)   Diffuse -- Top
-  ,Object (Sphere 16.5 (V3 27 16.5 47))          Black               ((V3 1 1 1) ^* 0.999) Mirror -- Mirror
+  ,Object (Sphere 16.5 (lerp time (V3 27 16.5 47) (V3 40 25 55)))          Black               ((V3 1 1 1) ^* 0.999) Mirror -- Mirror
   ,Object (Sphere 16.5 (V3 73 16.5 78))          Black               ((V3 1 1 1) ^* 0.999) Glass -- Glass
   ,Object (Sphere 1.5  (V3 50 (81.6-16.5) 81.6)) ((V3 4 4 4) ^* 100) Black                 Diffuse -- Light
   ]
 
 
 -- | List of object which are lights
-lights :: [Object]
-lights = filter (not . isBlack . emission) spheres
+lights :: Double -> [Object]
+lights t = filter (not . isBlack . emission) (spheres t)
 
 -- | The first object (if any) on the ray path
 intersectScene :: Ray -> Maybe (Object, Double)
-intersectScene ray = foldl' findIntersect Nothing spheres
+intersectScene ray = foldl' findIntersect Nothing (spheres (time ray))
   where
     findIntersect Nothing o = (o, ) <$> intersectSphere ray (shape o)
     findIntersect (old@(Just ((_, oldT)))) o = case intersectSphere ray (shape o) of
@@ -161,10 +162,11 @@ data IntersectionFrame =
   -- ^ Pointing on the right side
   , outside :: Bool
   -- ^ are we outside the surface
+  , timeFrame :: Double
   } deriving (Show)
 
 intersectFrame :: Ray -> Maybe (Object, IntersectionFrame)
-intersectFrame r@Ray{origin, direction} = do
+intersectFrame r@Ray{origin, direction, time} = do
   (obj, t) <- intersectScene r
   let
     x = origin + t *^ direction
@@ -173,7 +175,7 @@ intersectFrame r@Ray{origin, direction} = do
     outside = direction `dot` normalWrongSide < 0
     normal = if outside then normalWrongSide else -normalWrongSide -- Normal oriented on the right side
 
-  Just (obj, IntersectionFrame{x, wi, normal, outside})
+  Just (obj, IntersectionFrame{x, wi, normal, outside, timeFrame=time})
 
 radiance :: Gen RealWorld -> Ray -> Int -> Bool -> IO Color
 radiance gen ray depth useEmit = do
@@ -218,11 +220,17 @@ data Options = Options
   , width :: Int
   , height :: Int
   , samples :: Int
+  , enableMotionBlur :: Bool
   } deriving (Generic, Show, ParseRecord)
+
+timeStrategy :: Gen RealWorld -> Bool -> IO Double
+timeStrategy gen enableMotionBlur
+  | enableMotionBlur = sample1D gen
+  | otherwise = pure 1
 
 main :: IO ()
 main = do
-  Options{outputFile, width, height, samples} <- getRecord "Simple Ray Tracer"
+  Options{outputFile, width, height, samples, enableMotionBlur} <- getRecord "Simple Ray Tracer"
 
   let
     sampleCam = sampleCamera (V3 50 52 295.6) (normalize (V3 0 (-0.042612) (-1))) (width, height)
@@ -232,7 +240,7 @@ main = do
   pixels <- forConcurrently [1..height] $ \y -> do
     for [0..(width-1)] $ \x -> do
       contributions <- replicateM samples $ do
-        cameraRay <- sampleCam (height - y, x) <$> sample2D gen
+        cameraRay <- sampleCam (height - y, x) <$> sample2D gen <*> timeStrategy gen enableMotionBlur
         radiance gen cameraRay 0 True
 
       -- sum and normalize contributions
@@ -246,7 +254,7 @@ main = do
 
 -- | Compute direct lighting at a point
 getDiffuseDirect :: Sample2D -> IntersectionFrame -> Color
-getDiffuseDirect sample2d IntersectionFrame{x, normal} = foldl' (+) Black (map getALightContrib lights) -- sum of all light contributions
+getDiffuseDirect sample2d IntersectionFrame{x, normal, timeFrame} = foldl' (+) Black (map getALightContrib (lights timeFrame)) -- sum of all light contributions
   where
     getALightContrib :: Object -> Color
     getALightContrib Object{emission, shape=s@(Sphere{center, radius})} = do
@@ -256,7 +264,7 @@ getDiffuseDirect sample2d IntersectionFrame{x, normal} = foldl' (+) Black (map g
             cos_a_max = sqrt (1 - radius ^ (2 :: Int) / (dot xp xp))
             l = sampleCosinusMax sample2d cos_a_max `rotateAround` (normalize xp)
 
-          case intersectScene (Ray x l) of
+          case intersectScene (Ray x l timeFrame) of
             -- This is a bit contrived. If the only intersection we
             -- find is the light itself, it means that there is no
             -- intersection on the path
@@ -283,31 +291,31 @@ getDiffuseDirect sample2d IntersectionFrame{x, normal} = foldl' (+) Black (map g
 
 -- | Returns the mirror indirect direction, with a scaling factor
 getMirrorIndirect :: IntersectionFrame -> Ray
-getMirrorIndirect IntersectionFrame{x, wi, normal} = Ray x (reflect wi normal)
+getMirrorIndirect IntersectionFrame{x, wi, normal, timeFrame} = Ray x (reflect wi normal) timeFrame
 -- Here the scaling factor is equal to one, there is no sampling.
 
 -- | Returns the diffuse indirect direction, with a scaling factor
 getDiffuseIndirect :: Sample2D -> IntersectionFrame -> Ray
-getDiffuseIndirect sample IntersectionFrame{normal, x} = Ray x (sampleCosinus sample `rotateAround` normal)
+getDiffuseIndirect sample IntersectionFrame{normal, x, timeFrame} = Ray x (sampleCosinus sample `rotateAround` normal) timeFrame
 -- Here the scaling factor is equal to the cosinus contribution of the
 -- surface divided by the density probability, which is the same (we
 -- did that on purpose ;) So 1 ;)
 
 -- | Returns the glass indirect direction, with a scaling factor
 getGlassIndirect :: Sample2D -> IntersectionFrame -> Ray
-getGlassIndirect (Sample2D rnd _) IntersectionFrame{wi, normal, outside, x} =
+getGlassIndirect (Sample2D rnd _) IntersectionFrame{wi, normal, outside, x, timeFrame} =
   let
-    reflRay = Ray x (reflect wi normal)
+    reflRay = Ray x (reflect wi normal) timeFrame
     ior = 1.5
   in case refract wi normal outside ior of
     Nothing -> reflRay
     Just (transmitCoef, transmitDir) -> let
       in if rnd < transmitCoef
-        then Ray x transmitDir
+        then Ray x transmitDir timeFrame
         else reflRay
 
-sampleCamera :: Position -> Direction -> (Int, Int) -> (Int, Int) -> Sample2D -> Ray
-sampleCamera focalPoint viewDirection (width, height) (y, x) (Sample2D u v) = let
+sampleCamera :: Position -> Direction -> (Int, Int) -> (Int, Int) -> Sample2D -> Double -> Ray
+sampleCamera focalPoint viewDirection (width, height) (y, x) (Sample2D u v) time = let
   cx = V3 (fromIntegral width * 0.5135 / fromIntegral height) 0 0
   cy = (normalize (cx `cross` viewDirection)) ^* 0.5135
 
@@ -322,7 +330,7 @@ sampleCamera focalPoint viewDirection (width, height) (y, x) (Sample2D u v) = le
          ((dy + fromIntegral y) / fromIntegral height - 0.5)
          1) *! cameraBase
 
-  in Ray (focalPoint + (d' ^* 140)) (normalize d')
+  in Ray (focalPoint + (d' ^* 140)) (normalize d') time
 
 v2c :: Color -> [Char]
 v2c ((V3 a b c)) = show (tonemap a) ++ " " ++ show (tonemap b) ++ " " ++ show (tonemap c) ++ " "
